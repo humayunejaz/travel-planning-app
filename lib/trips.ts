@@ -1,4 +1,4 @@
-import { supabase, isSupabaseAvailable, generateUserId } from "./supabase"
+import { supabase, isSupabaseAvailable } from "./supabase"
 import type { Database } from "./supabase"
 import { invitationsService } from "./invitations"
 import { emailService } from "./email"
@@ -14,6 +14,11 @@ export interface TripWithCollaborators extends Trip {
   countries: string[]
   cities: string[]
   status: "planning" | "confirmed" | "completed"
+}
+
+// Simple UUID generation function
+const generateId = (): string => {
+  return Date.now().toString() + Math.random().toString(36).substr(2, 9)
 }
 
 export const tripsService = {
@@ -148,12 +153,15 @@ export const tripsService = {
   },
 
   async createTrip(trip: Omit<TripInsert, "user_id">, collaborators: string[], userId: string): Promise<Trip> {
-    console.log("🚀 === SIMPLIFIED TRIP CREATION (LOCALSTORAGE FIRST) ===")
+    console.log("🚀 === CREATING TRIP ===")
     console.log("📝 Trip data:", trip)
     console.log("👤 User ID:", userId)
 
+    // Generate a simple ID for localStorage
+    const localTripId = generateId()
+    console.log("🆔 Generated trip ID:", localTripId)
+
     // Always save to localStorage first - this always works
-    const localTripId = generateUserId()
     const localTrip = {
       id: localTripId,
       title: trip.title,
@@ -170,15 +178,20 @@ export const tripsService = {
       updated_at: new Date().toISOString(),
     }
 
-    const existingTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-    existingTrips.push(localTrip)
-    localStorage.setItem("trips", JSON.stringify(existingTrips))
-    console.log("✅ Saved to localStorage with ID:", localTripId)
+    try {
+      const existingTrips = JSON.parse(localStorage.getItem("trips") || "[]")
+      existingTrips.push(localTrip)
+      localStorage.setItem("trips", JSON.stringify(existingTrips))
+      console.log("✅ Saved to localStorage successfully")
+    } catch (error) {
+      console.error("❌ Failed to save to localStorage:", error)
+      throw new Error("Failed to save trip")
+    }
 
-    // Try database only if we have a real authenticated user
+    // Try database if available
     if (isSupabaseAvailable() && supabase) {
       try {
-        console.log("🔍 Checking if user is authenticated...")
+        console.log("🔍 Checking for authenticated user...")
 
         // Get the current authenticated user
         const {
@@ -187,7 +200,7 @@ export const tripsService = {
         } = await supabase.auth.getUser()
 
         if (authError || !authUser) {
-          console.log("⚠️ No authenticated user, skipping database save")
+          console.log("⚠️ No authenticated user, using localStorage only")
           return localTrip as Trip
         }
 
@@ -205,7 +218,7 @@ export const tripsService = {
           status: "planning",
         }
 
-        console.log("📤 Inserting trip with auth user ID:", tripData)
+        console.log("📤 Attempting database insertion...")
 
         const { data: newTrip, error } = await supabase.from("trips").insert(tripData).select().single()
 
@@ -229,6 +242,8 @@ export const tripsService = {
         console.error("❌ Database error:", error)
         console.log("✅ But localStorage version is available")
       }
+    } else {
+      console.log("⚠️ Supabase not available, using localStorage only")
     }
 
     // Process collaborators for localStorage trip
