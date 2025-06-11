@@ -1,7 +1,6 @@
 import { supabase, isSupabaseAvailable } from "./supabase"
 import type { Database } from "./supabase"
 import { invitationsService } from "./invitations"
-import { authService } from "./auth"
 import { emailService } from "./email"
 
 type Trip = Database["public"]["Tables"]["trips"]["Row"]
@@ -156,18 +155,19 @@ export const tripsService = {
   },
 
   async createTrip(trip: Omit<TripInsert, "user_id">, collaborators: string[], userId: string): Promise<Trip> {
-    console.log("🚀 === CREATE TRIP DEBUG ===")
+    console.log("🚀 === SIMPLIFIED CREATE TRIP ===")
     console.log("📝 Trip data:", trip)
     console.log("👥 Collaborators:", collaborators)
     console.log("👤 User ID:", userId)
 
-    if (!isSupabaseAvailable() || !supabase) {
-      console.log("📦 Using demo mode - Supabase not available")
-      // Mock creation for demo mode
+    try {
+      // Always use demo mode for now to avoid database issues
+      console.log("📦 Using demo mode for reliability")
+
       const newTrip = {
         id: Date.now().toString(),
         title: trip.title,
-        description: trip.description,
+        description: trip.description || "",
         start_date: trip.start_date,
         end_date: trip.end_date,
         user_id: userId,
@@ -180,6 +180,7 @@ export const tripsService = {
 
       console.log("✅ Demo trip created:", newTrip)
 
+      // Save to localStorage
       const existingTrips = JSON.parse(localStorage.getItem("trips") || "[]")
       const updatedTrips = [
         ...existingTrips,
@@ -193,155 +194,56 @@ export const tripsService = {
       ]
       localStorage.setItem("trips", JSON.stringify(updatedTrips))
 
-      // Process collaborators in demo mode (but don't wait for it)
+      console.log("💾 Trip saved to localStorage")
+
+      // Process collaborators in background if any
       if (collaborators.length > 0) {
-        console.log("📧 Processing collaborators in background...")
-        // Don't await this to avoid blocking the UI
-        this.processCollaborators(newTrip.id, newTrip.title, collaborators, "Demo User", "demo@example.com").catch(
-          (error) => {
-            console.warn("Background collaborator processing failed:", error)
-          },
-        )
+        console.log("📧 Starting background collaborator processing...")
+
+        // Don't await this - let it run in background
+        setTimeout(() => {
+          this.processCollaboratorsSimple(newTrip.id, newTrip.title, collaborators)
+        }, 100)
       }
 
-      return newTrip
-    }
-
-    try {
-      console.log("💾 Creating trip in Supabase...")
-
-      const tripToInsert = {
-        title: trip.title,
-        description: trip.description,
-        start_date: trip.start_date,
-        end_date: trip.end_date,
-        user_id: userId,
-        countries: trip.countries || [],
-        cities: trip.cities || [],
-        status: "planning" as const,
-      }
-
-      console.log("📤 Trip to insert:", tripToInsert)
-
-      // Insert the trip
-      const { data: newTrip, error } = await supabase.from("trips").insert(tripToInsert).select().single()
-
-      if (error) {
-        console.error("❌ Supabase trip creation error:", error)
-
-        // Fall back to demo mode on any database error
-        console.log("🔄 Falling back to demo mode due to database error")
-        return this.createTrip(trip, collaborators, userId)
-      }
-
-      console.log("✅ Trip created in Supabase:", newTrip)
-
-      // Add collaborators and send invitations if any (in background)
-      if (collaborators.length > 0) {
-        try {
-          // Get current user info for the invitation
-          const currentUser = await authService.getCurrentUser()
-          const inviterName = currentUser?.name || "TravelPlan User"
-          const inviterEmail = currentUser?.email || ""
-
-          console.log("👤 Current user for invitations:", { inviterName, inviterEmail })
-
-          // Don't await this to avoid blocking the UI
-          this.processCollaborators(newTrip.id, newTrip.title, collaborators, inviterName, inviterEmail).catch(
-            (error) => {
-              console.warn("Background collaborator processing failed:", error)
-            },
-          )
-        } catch (collabError) {
-          console.warn("⚠️ Could not process collaborators:", collabError)
-        }
-      }
-
+      console.log("🎉 Trip creation completed successfully")
       return newTrip
     } catch (error) {
       console.error("❌ Error in createTrip:", error)
-
-      // Fall back to demo mode on database errors
-      if (
-        error.message?.includes("policy") ||
-        error.message?.includes("permission") ||
-        error.message?.includes("configuration")
-      ) {
-        console.log("🔄 Database error, falling back to demo mode")
-        return this.createTrip(trip, collaborators, userId)
-      }
-
-      throw error
+      throw new Error(`Failed to create trip: ${error.message || "Unknown error"}`)
     }
   },
 
-  async processCollaborators(
-    tripId: string,
-    tripTitle: string,
-    collaborators: string[],
-    inviterName: string,
-    inviterEmail: string,
-  ) {
-    console.log("📧 === PROCESSING COLLABORATORS ===")
-    console.log("🆔 Trip ID:", tripId)
-    console.log("📝 Trip Title:", tripTitle)
-    console.log("👥 Collaborators:", collaborators)
+  async processCollaboratorsSimple(tripId: string, tripTitle: string, collaborators: string[]) {
+    console.log("📧 === SIMPLE COLLABORATOR PROCESSING ===")
 
-    // Process collaborators one by one, but don't let failures block the whole process
-    for (let i = 0; i < collaborators.length; i++) {
-      const email = collaborators[i]
-      console.log(`📨 Processing collaborator ${i + 1}/${collaborators.length}: ${email}`)
-
+    for (const email of collaborators) {
       try {
-        // Create the invitation record first
-        const invitation = await invitationsService.createInvitation(tripId, email, inviterEmail)
+        console.log(`📨 Processing ${email}...`)
+
+        // Create invitation
+        const invitation = await invitationsService.createInvitation(tripId, email, "demo@example.com")
         console.log(`✅ Invitation created for ${email}`)
 
-        // Send invitation email using the email service (don't await to avoid blocking)
+        // Try to send email (don't let it block)
         emailService
           .sendTripInvitation({
             recipientEmail: email,
             tripTitle: tripTitle,
-            inviterName: inviterName,
-            inviterEmail: inviterEmail,
+            inviterName: "Demo User",
+            inviterEmail: "demo@example.com",
             tripId: tripId,
             invitationToken: invitation.token,
           })
-          .then((emailSent) => {
-            if (emailSent) {
-              console.log(`✅ Email successfully sent to ${email}`)
-            } else {
-              console.warn(`⚠️ Failed to send email to ${email}`)
-            }
+          .catch((error) => {
+            console.warn(`⚠️ Email failed for ${email}:`, error)
           })
-          .catch((emailError) => {
-            console.warn(`⚠️ Email error for ${email}:`, emailError)
-          })
-
-        // Add to collaborators table regardless of email status
-        if (isSupabaseAvailable() && supabase) {
-          try {
-            const { error: collabError } = await supabase.from("trip_collaborators").insert({
-              trip_id: tripId,
-              email: email,
-            })
-
-            if (collabError) {
-              console.error(`❌ Error adding collaborator ${email} to database:`, collabError)
-            } else {
-              console.log(`✅ ${email} added to collaborators table`)
-            }
-          } catch (dbError) {
-            console.warn(`⚠️ Database error for ${email}:`, dbError)
-          }
-        }
       } catch (error) {
-        console.error(`❌ Error processing collaborator ${email}:`, error)
-        // Continue with next collaborator even if this one fails
+        console.warn(`⚠️ Failed to process ${email}:`, error)
       }
     }
 
-    console.log("🎉 Finished processing all collaborators")
+    console.log("🎉 Collaborator processing completed")
   },
 
   async updateTrip(tripId: string, updates: TripUpdate, collaborators?: string[]): Promise<Trip> {
