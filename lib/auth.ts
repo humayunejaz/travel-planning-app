@@ -29,7 +29,6 @@ export const authService = {
     try {
       console.log("Attempting Supabase signup...")
 
-      // Sign up with email confirmation disabled
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -38,8 +37,6 @@ export const authService = {
             name: name,
             role: role,
           },
-          // This should disable email confirmation
-          emailRedirectTo: undefined,
         },
       })
 
@@ -53,12 +50,11 @@ export const authService = {
       if (data.user) {
         console.log("User created successfully:", data.user.id)
 
-        // If email is not confirmed, try to confirm it automatically
-        if (!data.user.email_confirmed_at) {
-          console.log("Email not confirmed, attempting to confirm...")
-
-          // For development/demo purposes, we'll proceed anyway
-          // In production, you'd handle this differently
+        // Immediately confirm the user's email in the database
+        try {
+          await supabase.rpc("confirm_user_email", { user_id: data.user.id })
+        } catch (confirmError) {
+          console.warn("Could not auto-confirm email:", confirmError)
         }
 
         // Create profile
@@ -144,14 +140,33 @@ export const authService = {
       if (error) {
         console.error("Supabase signin error:", error)
 
-        // Handle email confirmation error specifically
+        // Handle email confirmation error by trying to confirm the user
         if (error.message.includes("Email not confirmed")) {
-          // Try to manually confirm the email in the database
-          console.log("Attempting to bypass email confirmation...")
+          console.log("Email not confirmed, attempting to confirm user...")
 
-          throw new Error(
-            "Your account needs email confirmation. We've sent you a confirmation email, but you can also contact support to activate your account manually.",
-          )
+          try {
+            // Try to confirm the user's email
+            const { data: users } = await supabase.from("auth.users").select("id").eq("email", email).single()
+
+            if (users) {
+              await supabase.rpc("confirm_user_email", { user_id: users.id })
+
+              // Try signing in again
+              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+              })
+
+              if (!retryError && retryData.user) {
+                console.log("Successfully confirmed and signed in user")
+                return retryData
+              }
+            }
+          } catch (confirmError) {
+            console.error("Could not confirm user:", confirmError)
+          }
+
+          throw new Error("Your account needs email confirmation. Please check your email or contact support.")
         }
 
         if (error.message.includes("Invalid login credentials")) {
@@ -161,7 +176,6 @@ export const authService = {
         throw new Error(error.message || "Sign in failed. Please try again.")
       }
 
-      // Even if email is not confirmed, let them in for demo purposes
       if (data.user) {
         console.log("Sign in successful:", data.user.id)
         return data
