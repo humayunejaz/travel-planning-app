@@ -151,22 +151,62 @@ export default function NewTripPage() {
 
     try {
       console.log("Creating trip with data:", tripData)
+      console.log("User ID:", user.id)
 
       // Create new trip
-      await tripsService.createTrip(
+      const createdTrip = await tripsService.createTrip(
         {
           title: tripData.title,
           description: tripData.description,
           start_date: tripData.startDate,
           end_date: tripData.endDate,
-          countries: tripData.countries, // Add this line
-          cities: tripData.cities, // Add this line
+          countries: tripData.countries,
+          cities: tripData.cities,
         },
         tripData.collaborators,
         user.id,
       )
 
-      console.log("Trip created successfully, redirecting...")
+      console.log("Trip created successfully:", createdTrip)
+
+      // Show success message
+      if (tripData.collaborators.length > 0) {
+        setError("") // Clear any errors
+        // Show a brief success message
+        const successDiv = document.createElement("div")
+        successDiv.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 16px 24px;
+        border-radius: 8px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        z-index: 10000;
+        font-family: system-ui, -apple-system, sans-serif;
+      `
+        successDiv.innerHTML = `
+        <div style="display: flex; align-items: center;">
+          <div style="font-size: 20px; margin-right: 12px;">✅</div>
+          <div>
+            <div style="font-weight: 600; margin-bottom: 4px;">Trip Created!</div>
+            <div style="font-size: 14px; opacity: 0.9;">Invitations sent to ${tripData.collaborators.length} collaborator(s)</div>
+          </div>
+        </div>
+      `
+        document.body.appendChild(successDiv)
+
+        // Remove notification after 3 seconds
+        setTimeout(() => {
+          if (successDiv.parentNode) {
+            successDiv.remove()
+          }
+        }, 3000)
+      }
+
+      // Redirect to dashboard immediately
+      console.log("Redirecting to dashboard...")
       router.push("/dashboard")
     } catch (error) {
       console.error("Error creating trip:", error)
