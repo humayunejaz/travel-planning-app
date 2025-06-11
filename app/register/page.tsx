@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plane, AlertCircle, CheckCircle, Users, MapPin } from "lucide-react"
+import { Plane, AlertCircle, CheckCircle, Users, MapPin, Building } from "lucide-react"
 import { authService } from "@/lib/auth"
 import { invitationsService } from "@/lib/invitations"
 import { tripsService } from "@/lib/trips"
@@ -22,6 +22,7 @@ export default function RegisterPage() {
     email: "",
     password: "",
     confirmPassword: "",
+    role: "traveler" as "traveler" | "agency", // Add role field
   })
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
@@ -35,15 +36,21 @@ export default function RegisterPage() {
   const invitationToken = searchParams.get("invitation")
   const tripId = searchParams.get("trip")
 
+  console.log("🔗 Register page loaded with params:", {
+    invitationToken,
+    tripId,
+    fullUrl: typeof window !== "undefined" ? window.location.href : "server-side",
+  })
+
   useEffect(() => {
     const loadInvitation = async () => {
       if (invitationToken) {
         setIsLoadingInvitation(true)
         try {
-          console.log("Loading invitation with token:", invitationToken)
+          console.log("📧 Loading invitation with token:", invitationToken)
 
           const invitationData = await invitationsService.getInvitationByToken(invitationToken)
-          console.log("Invitation data:", invitationData)
+          console.log("📋 Invitation data:", invitationData)
 
           if (invitationData) {
             setInvitation(invitationData)
@@ -56,19 +63,23 @@ export default function RegisterPage() {
 
             // Load trip details
             if (invitationData.trip_id) {
+              console.log("🗺️ Loading trip details for:", invitationData.trip_id)
               const trip = await tripsService.getTripById(invitationData.trip_id)
-              console.log("Trip details:", trip)
+              console.log("🎯 Trip details:", trip)
               setTripDetails(trip)
             }
           } else {
-            setError("Invalid or expired invitation link")
+            console.error("❌ Invalid or expired invitation")
+            setError("Invalid or expired invitation link. Please ask for a new invitation.")
           }
         } catch (error) {
-          console.error("Error loading invitation:", error)
-          setError("Failed to load invitation details")
+          console.error("💥 Error loading invitation:", error)
+          setError("Failed to load invitation details. Please try again.")
         } finally {
           setIsLoadingInvitation(false)
         }
+      } else {
+        console.log("ℹ️ No invitation token found - regular registration")
       }
     }
 
@@ -80,6 +91,8 @@ export default function RegisterPage() {
     setError("")
     setSuccess("")
     setIsLoading(true)
+
+    console.log("🚀 Starting registration process...")
 
     // Validation
     if (formData.password !== formData.confirmPassword) {
@@ -101,41 +114,52 @@ export default function RegisterPage() {
     }
 
     try {
-      console.log("Starting registration process...")
+      console.log("📝 Creating account for:", formData.email)
 
-      const signupResult = await authService.signUp(formData.email, formData.password, formData.name, "traveler")
-      console.log("Signup result:", signupResult)
+      const signupResult = await authService.signUp(formData.email, formData.password, formData.name, formData.role)
+      console.log("✅ Signup result:", signupResult)
 
       if (signupResult.user) {
-        // If there's an invitation, accept it
-        if (invitation && invitationToken) {
+        // If there's an invitation, accept it (only for travelers)
+        if (invitation && invitationToken && formData.role === "traveler") {
           try {
-            console.log("Accepting invitation...")
-            await invitationsService.acceptInvitation(invitationToken)
+            console.log("🎯 Accepting invitation...")
+            const accepted = await invitationsService.acceptInvitation(invitationToken)
+            console.log("📧 Invitation acceptance result:", accepted)
 
             if (tripDetails) {
-              setSuccess(`Account created successfully! You've been added to "${tripDetails.title}".`)
+              setSuccess(`🎉 Account created successfully! You've been added to "${tripDetails.title}".`)
             } else {
-              setSuccess("Account created successfully! You've been added to the trip.")
+              setSuccess("🎉 Account created successfully! You've been added to the trip.")
             }
 
             // Redirect to dashboard after a short delay
             setTimeout(() => {
+              console.log("🏠 Redirecting to dashboard...")
               router.push("/dashboard")
             }, 2000)
           } catch (invError) {
-            console.error("Error accepting invitation:", invError)
+            console.error("⚠️ Error accepting invitation:", invError)
             // Still redirect to dashboard even if invitation acceptance fails
-            router.push("/dashboard")
+            setSuccess("🎉 Account created successfully! Redirecting to dashboard...")
+            setTimeout(() => {
+              router.push("/dashboard")
+            }, 1500)
           }
         } else {
-          // Regular registration without invitation
-          console.log("Registration successful, redirecting to dashboard...")
-          router.push("/dashboard")
+          // Regular registration without invitation or agency registration
+          const redirectPath = formData.role === "agency" ? "/agency" : "/dashboard"
+          console.log(`🏠 Registration successful, redirecting to ${redirectPath}...`)
+          setSuccess(
+            `🎉 Account created successfully! Redirecting to ${formData.role === "agency" ? "agency dashboard" : "dashboard"}...`,
+          )
+          setTimeout(() => {
+            router.push(redirectPath)
+          }, 1500)
         }
       }
     } catch (error: any) {
-      console.error("Registration error:", error)
+      console.error("💥 Registration error:", error)
 
       // Provide user-friendly error messages
       let errorMessage = "Failed to create account. Please try again."
@@ -155,7 +179,7 @@ export default function RegisterPage() {
               id: `mock-${Date.now()}`,
               email: formData.email,
               name: formData.name,
-              role: "traveler" as const,
+              role: formData.role,
             }
             localStorage.setItem("mockUser", JSON.stringify(mockUser))
             localStorage.setItem("isAuthenticated", "true")
@@ -165,7 +189,10 @@ export default function RegisterPage() {
               await invitationsService.acceptInvitation(invitationToken)
             }
 
-            router.push("/dashboard")
+            setSuccess("🎉 Account created in demo mode! Redirecting...")
+            setTimeout(() => {
+              router.push("/dashboard")
+            }, 1500)
             return
           } catch (demoError) {
             errorMessage = "Registration failed. Please try again later."
@@ -208,8 +235,13 @@ export default function RegisterPage() {
             <h1 className="text-3xl font-bold text-gray-900">TravelPlan</h1>
           </div>
           <p className="text-gray-600">
-            {invitation ? "Join the trip and start planning!" : "Start planning your adventures"}
+            {invitation ? "🎯 Join the trip and start planning!" : "Start planning your adventures"}
           </p>
+        </div>
+
+        {/* DEPLOYMENT TEST - This should be visible if latest code is deployed */}
+        <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded text-center">
+          ✅ <strong>LATEST CODE DEPLOYED</strong> - If you see this, the deployment worked!
         </div>
 
         {/* Invitation Details */}
@@ -217,8 +249,7 @@ export default function RegisterPage() {
           <Card className="mb-6 border-blue-200 bg-blue-50">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center text-blue-900">
-                <Users className="h-5 w-5 mr-2" />
-                Trip Invitation
+                <Users className="h-5 w-5 mr-2" />🎉 Trip Invitation
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -247,6 +278,17 @@ export default function RegisterPage() {
           </Card>
         )}
 
+        {/* Warning for agency users with invitations */}
+        {invitation && formData.role === "agency" && (
+          <Alert className="mb-6" variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Note:</strong> Travel agencies cannot accept trip invitations. Trip invitations are for individual
+              travelers only. You can still create an agency account, but you won't be added to this trip.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {!isSupabaseAvailable() && (
           <Alert className="mb-6">
             <AlertCircle className="h-4 w-4" />
@@ -258,7 +300,7 @@ export default function RegisterPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{invitation ? "Accept Invitation & Create Account" : "Create your account"}</CardTitle>
+            <CardTitle>{invitation ? "🎯 Accept Invitation & Create Account" : "Create your account"}</CardTitle>
             <CardDescription>
               {invitation
                 ? "Create your account to join the trip and start collaborating"
@@ -294,6 +336,39 @@ export default function RegisterPage() {
                   disabled={isLoading}
                 />
               </div>
+
+              {/* ACCOUNT TYPE SELECTOR - This should be visible */}
+              <div className="space-y-2">
+                <Label htmlFor="role">Account Type</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={formData.role === "traveler" ? "default" : "outline"}
+                    onClick={() => setFormData({ ...formData, role: "traveler" })}
+                    disabled={isLoading}
+                    className="flex items-center justify-center"
+                  >
+                    <Users className="h-4 w-4 mr-2" />
+                    Traveler
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={formData.role === "agency" ? "default" : "outline"}
+                    onClick={() => setFormData({ ...formData, role: "agency" })}
+                    disabled={isLoading}
+                    className="flex items-center justify-center"
+                  >
+                    <Building className="h-4 w-4 mr-2" />
+                    Travel Agency
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {formData.role === "traveler"
+                    ? "Plan and organize your personal trips"
+                    : "Manage trips for your travel agency clients"}
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -306,7 +381,7 @@ export default function RegisterPage() {
                   required
                   disabled={isLoading || !!invitation}
                 />
-                {invitation && <p className="text-xs text-gray-500">Email pre-filled from invitation</p>}
+                {invitation && <p className="text-xs text-gray-500">✅ Email pre-filled from invitation</p>}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
@@ -338,8 +413,8 @@ export default function RegisterPage() {
                 {isLoading
                   ? "Creating Account..."
                   : invitation
-                    ? "Accept Invitation & Create Account"
-                    : "Create Account"}
+                    ? "🎯 Accept Invitation & Create Account"
+                    : `Create ${formData.role === "agency" ? "Agency" : "Traveler"} Account`}
               </Button>
             </form>
 
@@ -361,16 +436,17 @@ export default function RegisterPage() {
         {process.env.NODE_ENV === "development" && (
           <div className="mt-4 p-3 bg-gray-100 rounded text-xs">
             <p>
-              <strong>Debug Info:</strong>
+              <strong>🔧 Debug Info:</strong>
             </p>
-            <p>Supabase Available: {isSupabaseAvailable() ? "Yes" : "No"}</p>
             <p>Invitation Token: {invitationToken || "None"}</p>
             <p>Trip ID: {tripId || "None"}</p>
-            <p>URL: {process.env.NEXT_PUBLIC_SUPABASE_URL ? "Set" : "Missing"}</p>
-            <p>Key: {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "Set" : "Missing"}</p>
+            <p>Full URL: {typeof window !== "undefined" ? window.location.href : "Loading..."}</p>
+            <p>Invitation Valid: {invitation ? "✅ Yes" : "❌ No"}</p>
+            <p>Trip Loaded: {tripDetails ? "✅ Yes" : "❌ No"}</p>
           </div>
         )}
       </div>
     </div>
   )
 }
+
