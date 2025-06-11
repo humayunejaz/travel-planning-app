@@ -9,10 +9,6 @@ import { Badge } from "@/components/ui/badge"
 import { Plus, MapPin, Calendar, Users, Edit, Plane, LogOut } from "lucide-react"
 import { authService } from "@/lib/auth"
 import { tripsService } from "@/lib/trips"
-import { EmailDashboard } from "@/components/email-dashboard"
-import { DebugPanel } from "@/components/debug-panel"
-import { ResendSetupBanner } from "@/components/resend-setup-banner"
-import { EmailTestPanel } from "@/components/email-test-panel"
 
 interface Trip {
   id: string
@@ -68,7 +64,6 @@ export default function DashboardPage() {
         setTrips(userTrips)
       } catch (error) {
         console.error("Error loading dashboard:", error)
-        // If there's an error, try to redirect to login
         router.push("/")
       } finally {
         setIsLoading(false)
@@ -84,7 +79,6 @@ export default function DashboardPage() {
       router.push("/")
     } catch (error) {
       console.error("Logout error:", error)
-      // Force logout even if there's an error
       localStorage.removeItem("isAuthenticated")
       localStorage.removeItem("mockUser")
       router.push("/")
@@ -143,9 +137,6 @@ export default function DashboardPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          {/* Resend Setup Banner */}
-          <ResendSetupBanner />
-
           <div className="flex justify-between items-center mb-6">
             <div>
               <h2 className="text-3xl font-bold text-gray-900">Your Trips</h2>
@@ -291,15 +282,6 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-
-        {/* Debug Panel */}
-        <DebugPanel />
-
-        {/* Email Test Panel */}
-        <EmailTestPanel />
-
-        {/* Email Dashboard - floating button */}
-        <EmailDashboard />
       </main>
     </div>
   )
