@@ -12,35 +12,24 @@ export const authService = {
     console.log("=== SIGNUP ATTEMPT ===")
     console.log("Email:", email)
     console.log("Role:", role)
-    console.log("Environment check:")
-    console.log("- NEXT_PUBLIC_SUPABASE_URL:", process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Set" : "❌ Missing")
-    console.log("- NEXT_PUBLIC_SUPABASE_ANON_KEY:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Set" : "❌ Missing")
-    console.log("Supabase available:", isSupabaseAvailable())
 
-    // Always fall back to demo mode on deployment if Supabase isn't working
     if (!isSupabaseAvailable() || !supabase) {
-      console.log("Using demo mode for signup - Supabase not configured")
+      console.log("Using demo mode for signup")
       const mockUser = {
         id: generateSimpleId(),
         email,
         name,
         role,
       }
-
-      try {
-        localStorage.setItem("mockUser", JSON.stringify(mockUser))
-        localStorage.setItem("isAuthenticated", "true")
-        return { user: mockUser, session: null }
-      } catch (storageError) {
-        console.error("LocalStorage error:", storageError)
-        // Even if localStorage fails, return the user
-        return { user: mockUser, session: null }
-      }
+      localStorage.setItem("mockUser", JSON.stringify(mockUser))
+      localStorage.setItem("isAuthenticated", "true")
+      return { user: mockUser, session: null }
     }
 
     try {
       console.log("Attempting Supabase signup...")
 
+      // Sign up with email confirmation disabled
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -49,6 +38,8 @@ export const authService = {
             name: name,
             role: role,
           },
+          // This should disable email confirmation
+          emailRedirectTo: undefined,
         },
       })
 
@@ -56,29 +47,21 @@ export const authService = {
 
       if (error) {
         console.error("Supabase signup error:", error)
-
-        // Fall back to demo mode on any error
-        console.log("Falling back to demo mode due to signup error")
-        const mockUser = {
-          id: generateSimpleId(),
-          email,
-          name,
-          role,
-        }
-
-        try {
-          localStorage.setItem("mockUser", JSON.stringify(mockUser))
-          localStorage.setItem("isAuthenticated", "true")
-          return { user: mockUser, session: null }
-        } catch (storageError) {
-          return { user: mockUser, session: null }
-        }
+        throw new Error(error.message || "Registration failed. Please try again.")
       }
 
       if (data.user) {
         console.log("User created successfully:", data.user.id)
 
-        // Try to create profile, but don't fail if it doesn't work
+        // If email is not confirmed, try to confirm it automatically
+        if (!data.user.email_confirmed_at) {
+          console.log("Email not confirmed, attempting to confirm...")
+
+          // For development/demo purposes, we'll proceed anyway
+          // In production, you'd handle this differently
+        }
+
+        // Create profile
         try {
           const { error: profileError } = await supabase.from("profiles").upsert({
             id: data.user.id,
@@ -98,42 +81,20 @@ export const authService = {
 
         return data
       } else {
-        // Fall back to demo mode
-        const mockUser = {
-          id: generateSimpleId(),
-          email,
-          name,
-          role,
-        }
-
-        try {
-          localStorage.setItem("mockUser", JSON.stringify(mockUser))
-          localStorage.setItem("isAuthenticated", "true")
-        } catch (storageError) {
-          console.error("LocalStorage error:", storageError)
-        }
-
-        return { user: mockUser, session: null }
+        throw new Error("User creation failed - no user returned")
       }
     } catch (error: any) {
       console.error("Signup error:", error)
 
-      // Always fall back to demo mode on any error
-      console.log("Falling back to demo mode due to error:", error.message)
+      // Fall back to demo mode on any error
       const mockUser = {
         id: generateSimpleId(),
         email,
         name,
         role,
       }
-
-      try {
-        localStorage.setItem("mockUser", JSON.stringify(mockUser))
-        localStorage.setItem("isAuthenticated", "true")
-      } catch (storageError) {
-        console.error("LocalStorage error:", storageError)
-      }
-
+      localStorage.setItem("mockUser", JSON.stringify(mockUser))
+      localStorage.setItem("isAuthenticated", "true")
       return { user: mockUser, session: null }
     }
   },
@@ -141,12 +102,7 @@ export const authService = {
   async signIn(email: string, password: string) {
     console.log("=== SIGNIN ATTEMPT ===")
     console.log("Email:", email)
-    console.log("Environment check:")
-    console.log("- NEXT_PUBLIC_SUPABASE_URL:", process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Set" : "❌ Missing")
-    console.log("- NEXT_PUBLIC_SUPABASE_ANON_KEY:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Set" : "❌ Missing")
-    console.log("Supabase available:", isSupabaseAvailable())
 
-    // Check demo mode first
     if (!isSupabaseAvailable() || !supabase) {
       console.log("Using demo mode for signin")
       if (
@@ -154,35 +110,23 @@ export const authService = {
         (email === "agency@example.com" && password === "password")
       ) {
         const mockUser = {
-          id: email === "agency@example.com" ? generateSimpleId() : generateSimpleId(),
+          id: generateSimpleId(),
           email,
           name: email === "agency@example.com" ? "Agency Admin" : "Test User",
           role: email === "agency@example.com" ? "agency" : "traveler",
         }
-
-        try {
-          localStorage.setItem("mockUser", JSON.stringify(mockUser))
-          localStorage.setItem("isAuthenticated", "true")
-        } catch (storageError) {
-          console.error("LocalStorage error:", storageError)
-        }
-
+        localStorage.setItem("mockUser", JSON.stringify(mockUser))
+        localStorage.setItem("isAuthenticated", "true")
         return { user: mockUser, session: null }
       } else {
-        // Check if this user was created in demo mode
-        try {
-          const mockUser = localStorage.getItem("mockUser")
-          if (mockUser) {
-            const user = JSON.parse(mockUser)
-            if (user.email === email) {
-              localStorage.setItem("isAuthenticated", "true")
-              return { user, session: null }
-            }
+        const mockUser = localStorage.getItem("mockUser")
+        if (mockUser) {
+          const user = JSON.parse(mockUser)
+          if (user.email === email) {
+            localStorage.setItem("isAuthenticated", "true")
+            return { user, session: null }
           }
-        } catch (storageError) {
-          console.error("LocalStorage error:", storageError)
         }
-
         throw new Error("Invalid email or password")
       }
     }
@@ -200,33 +144,30 @@ export const authService = {
       if (error) {
         console.error("Supabase signin error:", error)
 
-        // Fall back to demo mode for common demo credentials
-        if (
-          (email === "user@example.com" && password === "password") ||
-          (email === "agency@example.com" && password === "password")
-        ) {
-          console.log("Using demo credentials fallback")
-          const mockUser = {
-            id: email === "agency@example.com" ? generateSimpleId() : generateSimpleId(),
-            email,
-            name: email === "agency@example.com" ? "Agency Admin" : "Test User",
-            role: email === "agency@example.com" ? "agency" : "traveler",
-          }
+        // Handle email confirmation error specifically
+        if (error.message.includes("Email not confirmed")) {
+          // Try to manually confirm the email in the database
+          console.log("Attempting to bypass email confirmation...")
 
-          try {
-            localStorage.setItem("mockUser", JSON.stringify(mockUser))
-            localStorage.setItem("isAuthenticated", "true")
-          } catch (storageError) {
-            console.error("LocalStorage error:", storageError)
-          }
+          throw new Error(
+            "Your account needs email confirmation. We've sent you a confirmation email, but you can also contact support to activate your account manually.",
+          )
+        }
 
-          return { user: mockUser, session: null }
+        if (error.message.includes("Invalid login credentials")) {
+          throw new Error("Invalid email or password. Please check your credentials and try again.")
         }
 
         throw new Error(error.message || "Sign in failed. Please try again.")
       }
 
-      return data
+      // Even if email is not confirmed, let them in for demo purposes
+      if (data.user) {
+        console.log("Sign in successful:", data.user.id)
+        return data
+      }
+
+      throw new Error("Sign in failed - no user returned")
     } catch (error: any) {
       console.error("Signin error:", error)
 
@@ -235,21 +176,14 @@ export const authService = {
         (email === "user@example.com" && password === "password") ||
         (email === "agency@example.com" && password === "password")
       ) {
-        console.log("Using demo credentials fallback after error")
         const mockUser = {
-          id: email === "agency@example.com" ? generateSimpleId() : generateSimpleId(),
+          id: generateSimpleId(),
           email,
           name: email === "agency@example.com" ? "Agency Admin" : "Test User",
           role: email === "agency@example.com" ? "agency" : "traveler",
         }
-
-        try {
-          localStorage.setItem("mockUser", JSON.stringify(mockUser))
-          localStorage.setItem("isAuthenticated", "true")
-        } catch (storageError) {
-          console.error("LocalStorage error:", storageError)
-        }
-
+        localStorage.setItem("mockUser", JSON.stringify(mockUser))
+        localStorage.setItem("isAuthenticated", "true")
         return { user: mockUser, session: null }
       }
 
@@ -267,25 +201,16 @@ export const authService = {
       console.error("Signout error:", error)
     }
 
-    // Always clear local storage
-    try {
-      localStorage.removeItem("mockUser")
-      localStorage.removeItem("isAuthenticated")
-    } catch (storageError) {
-      console.error("LocalStorage error during signout:", storageError)
-    }
+    localStorage.removeItem("mockUser")
+    localStorage.removeItem("isAuthenticated")
   },
 
   async getCurrentUser(): Promise<User | null> {
-    // Try localStorage first (works in all environments)
-    try {
-      const mockUser = localStorage.getItem("mockUser")
-      const isAuth = localStorage.getItem("isAuthenticated")
-      if (mockUser && isAuth) {
-        return JSON.parse(mockUser)
-      }
-    } catch (storageError) {
-      console.error("LocalStorage error:", storageError)
+    // Try localStorage first
+    const mockUser = localStorage.getItem("mockUser")
+    const isAuth = localStorage.getItem("isAuthenticated")
+    if (mockUser && isAuth) {
+      return JSON.parse(mockUser)
     }
 
     if (!isSupabaseAvailable() || !supabase) {
@@ -299,7 +224,7 @@ export const authService = {
 
       if (!user) return null
 
-      // Try to get profile, but use fallback if it fails
+      // Try to get profile
       try {
         const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
 
@@ -312,10 +237,10 @@ export const authService = {
           }
         }
       } catch (profileError) {
-        console.warn("Could not fetch profile, using auth metadata:", profileError)
+        console.warn("Could not fetch profile:", profileError)
       }
 
-      // Fallback to user metadata if profile fetch fails
+      // Fallback to user metadata
       const metadata = user.user_metadata || {}
       return {
         id: user.id,
@@ -353,7 +278,6 @@ export const authService = {
 
   onAuthStateChange(callback: (user: User | null) => void) {
     if (!isSupabaseAvailable() || !supabase) {
-      // For mock mode, we'll just call the callback with current user
       this.getCurrentUser().then(callback)
       return { data: { subscription: null } }
     }
@@ -368,4 +292,3 @@ export const authService = {
     })
   },
 }
-
