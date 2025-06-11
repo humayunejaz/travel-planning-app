@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
@@ -14,11 +13,11 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, Plus, X, Plane, MapPin, Calendar, Users, Trash2 } from "lucide-react"
 import { authService, type User } from "@/lib/auth"
-import { tripsService, type TripWithCollaborators } from "@/lib/trips"
+import { tripsService, type SimpleTripWithCollaborators } from "@/lib/trips"
 
 export default function EditTripPage() {
   const [user, setUser] = useState<User | null>(null)
-  const [trip, setTrip] = useState<TripWithCollaborators | null>(null)
+  const [trip, setTrip] = useState<SimpleTripWithCollaborators | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -33,7 +32,7 @@ export default function EditTripPage() {
   useEffect(() => {
     const loadTripData = async () => {
       try {
-        console.log("Loading trip data for ID:", tripId)
+        console.log("🔍 Loading trip data for ID:", tripId)
 
         // Check authentication
         const currentUser = await authService.getCurrentUser()
@@ -51,53 +50,20 @@ export default function EditTripPage() {
 
         setUser(currentUser)
 
-        // Try to load trip from database first
-        console.log("Attempting to load trip from database...")
-        let tripData = await tripsService.getTripById(tripId)
-
-        // If not found in database, try localStorage
-        if (!tripData) {
-          console.log("Trip not found in database, checking localStorage...")
-          const localTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-          const localTrip = localTrips.find((t: any) => t.id === tripId)
-
-          if (localTrip) {
-            console.log("Found trip in localStorage:", localTrip)
-            tripData = {
-              id: localTrip.id,
-              title: localTrip.title,
-              description: localTrip.description || "",
-              start_date: localTrip.start_date,
-              end_date: localTrip.end_date,
-              user_id: localTrip.userId || localTrip.user_id,
-              countries: localTrip.countries || [],
-              cities: localTrip.cities || [],
-              status: localTrip.status || "planning",
-              collaborators: localTrip.collaborators || [],
-              created_at: localTrip.created_at,
-              updated_at: localTrip.updated_at,
-            }
-          }
-        }
-
-        console.log("Final trip data:", tripData)
+        // Load trip data
+        console.log("📊 Loading trip from database/localStorage...")
+        const tripData = await tripsService.getTripById(tripId)
 
         if (!tripData) {
+          console.error("❌ Trip not found")
           setError("Trip not found")
           return
         }
 
-        // Check if user owns this trip (be more lenient for demo mode)
-        const tripUserId = tripData.user_id || tripData.userId
-        if (tripUserId && tripUserId !== currentUser.id) {
-          console.log("User ID mismatch:", { tripUserId, currentUserId: currentUser.id })
-          // For demo mode, be more lenient
-          console.log("Allowing access for demo purposes")
-        }
-
+        console.log("✅ Trip loaded successfully:", tripData)
         setTrip(tripData)
       } catch (error) {
-        console.error("Error loading trip:", error)
+        console.error("❌ Error loading trip:", error)
         setError("Failed to load trip data")
       } finally {
         setIsLoading(false)
@@ -107,7 +73,7 @@ export default function EditTripPage() {
     loadTripData()
   }, [router, tripId])
 
-  const updateTrip = (updates: Partial<TripWithCollaborators>) => {
+  const updateTrip = (updates: Partial<SimpleTripWithCollaborators>) => {
     if (!trip) return
     const updatedTrip = { ...trip, ...updates }
     setTrip(updatedTrip)
@@ -179,9 +145,8 @@ export default function EditTripPage() {
     }
 
     try {
-      console.log("Updating trip:", trip)
+      console.log("💾 Updating trip:", trip)
 
-      // Update trip in database/localStorage
       await tripsService.updateTrip(
         trip.id,
         {
@@ -189,14 +154,17 @@ export default function EditTripPage() {
           description: trip.description,
           start_date: trip.start_date,
           end_date: trip.end_date,
+          countries: trip.countries,
+          cities: trip.cities,
+          status: trip.status,
         },
         trip.collaborators,
       )
 
-      console.log("Trip updated successfully")
+      console.log("✅ Trip updated successfully")
       router.push("/dashboard")
     } catch (error) {
-      console.error("Update trip error:", error)
+      console.error("❌ Update trip error:", error)
       setError("Failed to update trip. Please try again.")
     } finally {
       setIsSaving(false)
@@ -209,12 +177,12 @@ export default function EditTripPage() {
     if (confirm("Are you sure you want to delete this trip? This action cannot be undone.")) {
       setIsDeleting(true)
       try {
-        console.log("Deleting trip:", trip.id)
+        console.log("🗑️ Deleting trip:", trip.id)
         await tripsService.deleteTrip(trip.id)
-        console.log("Trip deleted successfully")
+        console.log("✅ Trip deleted successfully")
         router.push("/dashboard")
       } catch (error) {
-        console.error("Delete trip error:", error)
+        console.error("❌ Delete trip error:", error)
         setError("Failed to delete trip. Please try again.")
         setIsDeleting(false)
       }
@@ -489,4 +457,3 @@ export default function EditTripPage() {
     </div>
   )
 }
-
