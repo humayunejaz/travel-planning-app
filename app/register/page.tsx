@@ -239,11 +239,6 @@ export default function RegisterPage() {
           </p>
         </div>
 
-        {/* DEPLOYMENT TEST - This should be visible if latest code is deployed */}
-        <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded text-center">
-          ✅ <strong>LATEST CODE DEPLOYED</strong> - If you see this, the deployment worked!
-        </div>
-
         {/* Invitation Details */}
         {invitation && tripDetails && (
           <Card className="mb-6 border-blue-200 bg-blue-50">
@@ -336,8 +331,6 @@ export default function RegisterPage() {
                   disabled={isLoading}
                 />
               </div>
-
-              {/* ACCOUNT TYPE SELECTOR - This should be visible */}
               <div className="space-y-2">
                 <Label htmlFor="role">Account Type</Label>
                 <div className="grid grid-cols-2 gap-2">
@@ -368,7 +361,6 @@ export default function RegisterPage() {
                     : "Manage trips for your travel agency clients"}
                 </p>
               </div>
-
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -449,4 +441,5 @@ export default function RegisterPage() {
     </div>
   )
 }
+
 
