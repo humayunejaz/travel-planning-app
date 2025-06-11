@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -28,7 +27,8 @@ export default function NewTripPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState("")
-  const [debugInfo, setDebugInfo] = useState<string[]>([])
+  const [success, setSuccess] = useState("")
+
   const [tripData, setTripData] = useState({
     title: "",
     description: "",
@@ -38,40 +38,35 @@ export default function NewTripPage() {
     cities: [] as string[],
     collaborators: [] as string[],
   })
+
   const [newCountry, setNewCountry] = useState("")
   const [newCity, setNewCity] = useState("")
   const [newCollaborator, setNewCollaborator] = useState("")
   const router = useRouter()
 
-  const addDebugInfo = (info: string) => {
-    console.log("DEBUG:", info)
-    setDebugInfo((prev) => [...prev, `${new Date().toLocaleTimeString()}: ${info}`])
-  }
-
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        addDebugInfo("Checking authentication for new trip page...")
+        console.log("Checking authentication...")
         const currentUser = await authService.getCurrentUser()
-        addDebugInfo(`Current user: ${currentUser ? currentUser.email : "null"}`)
 
         if (!currentUser) {
-          addDebugInfo("No user found, redirecting to login")
+          console.log("No user found, redirecting to login")
           router.push("/")
           return
         }
 
         if (currentUser.role === "agency") {
-          addDebugInfo("Agency user, redirecting to agency dashboard")
+          console.log("Agency user, redirecting to agency dashboard")
           router.push("/agency")
           return
         }
 
         setIsAuthenticated(true)
         setUser(currentUser)
-        addDebugInfo("Authentication successful")
+        console.log("Authentication successful:", currentUser.email)
       } catch (error) {
-        addDebugInfo(`Auth check error: ${error}`)
+        console.error("Auth check error:", error)
         router.push("/")
       } finally {
         setIsLoading(false)
@@ -139,176 +134,67 @@ export default function NewTripPage() {
     })
   }
 
-  const testDatabaseConnection = async () => {
-    addDebugInfo("=== TESTING DATABASE CONNECTION ===")
-    try {
-      const { supabase } = await import("@/lib/supabase")
-
-      // Test basic connection
-      const { data: connectionTest, error: connectionError } = await supabase.from("profiles").select("count").limit(1)
-
-      if (connectionError) {
-        addDebugInfo(`❌ Connection test failed: ${connectionError.message}`)
-        return false
-      }
-
-      addDebugInfo("✅ Basic connection OK")
-
-      // Test auth
-      const { data: authData } = await supabase.auth.getUser()
-      addDebugInfo(`🔑 Auth user: ${authData?.user?.id || "none"}`)
-
-      // Test trips table access
-      const { data: tripsTest, error: tripsError } = await supabase.from("trips").select("count").limit(1)
-
-      if (tripsError) {
-        addDebugInfo(`❌ Trips table access failed: ${tripsError.message}`)
-        return false
-      }
-
-      addDebugInfo("✅ Trips table access OK")
-
-      // Test simple insertion
-      const testTrip = {
-        title: `Test Trip ${Date.now()}`,
-        description: "Test description",
-        user_id: user?.id || "test-user-id",
-      }
-
-      addDebugInfo(`🧪 Testing insertion with: ${JSON.stringify(testTrip)}`)
-
-      const { data: insertTest, error: insertError } = await supabase.from("trips").insert(testTrip).select().single()
-
-      if (insertError) {
-        addDebugInfo(`❌ Test insertion failed: ${insertError.message}`)
-        addDebugInfo(`Error details: ${JSON.stringify(insertError)}`)
-        return false
-      }
-
-      addDebugInfo(`✅ Test insertion successful: ${insertTest.id}`)
-
-      // Clean up test trip
-      await supabase.from("trips").delete().eq("id", insertTest.id)
-      addDebugInfo("🧹 Test trip cleaned up")
-
-      return true
-    } catch (error: any) {
-      addDebugInfo(`❌ Database test error: ${error.message}`)
-      return false
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError("")
-    setIsSaving(true)
-    setDebugInfo([]) // Clear previous debug info
+    console.log("=== FORM SUBMITTED ===")
 
-    addDebugInfo("=== STARTING TRIP CREATION ===")
+    setError("")
+    setSuccess("")
+    setIsSaving(true)
 
     try {
-      // Validation
-      if (!tripData.title || !tripData.startDate || !tripData.endDate) {
-        addDebugInfo("Validation failed: missing required fields")
-        setError("Please fill in all required fields")
-        setIsSaving(false)
-        return
+      // Basic validation
+      if (!tripData.title.trim()) {
+        throw new Error("Trip title is required")
+      }
+
+      if (!tripData.startDate) {
+        throw new Error("Start date is required")
+      }
+
+      if (!tripData.endDate) {
+        throw new Error("End date is required")
       }
 
       if (!user) {
-        addDebugInfo("Validation failed: no user")
-        setError("User not authenticated")
-        setIsSaving(false)
-        return
+        throw new Error("User not authenticated")
       }
 
-      addDebugInfo(`User validated: ${user.email} (${user.id})`)
-
-      // Test database connection first
-      const dbWorking = await testDatabaseConnection()
-      addDebugInfo(`Database test result: ${dbWorking ? "PASS" : "FAIL"}`)
-
-      // Create the trip object
-      const tripToCreate = {
+      console.log("Creating trip with data:", {
         title: tripData.title,
         description: tripData.description,
         start_date: tripData.startDate,
         end_date: tripData.endDate,
         countries: tripData.countries,
         cities: tripData.cities,
-      }
-
-      addDebugInfo(`Trip data: ${JSON.stringify(tripToCreate)}`)
-      addDebugInfo("Calling tripsService.createTrip...")
-
-      // Create new trip with timeout
-      const createTripPromise = tripsService.createTrip(tripToCreate, tripData.collaborators, user.id)
-
-      // Add a timeout to prevent infinite waiting
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Trip creation timed out after 15 seconds")), 15000)
       })
 
-      const createdTrip = await Promise.race([createTripPromise, timeoutPromise])
+      // Create the trip
+      const createdTrip = await tripsService.createTrip(
+        {
+          title: tripData.title,
+          description: tripData.description,
+          start_date: tripData.startDate,
+          end_date: tripData.endDate,
+          countries: tripData.countries,
+          cities: tripData.cities,
+        },
+        tripData.collaborators,
+        user.id,
+      )
 
-      addDebugInfo(`Trip created successfully: ${JSON.stringify(createdTrip)}`)
+      console.log("Trip created successfully:", createdTrip)
 
       // Show success message
-      if (tripData.collaborators.length > 0) {
-        addDebugInfo(`Showing success message for ${tripData.collaborators.length} collaborators`)
-        // Show a brief success message
-        const successDiv = document.createElement("div")
-        successDiv.style.cssText = `
-          position: fixed;
-          top: 20px;
-          right: 20px;
-          background: #10b981;
-          color: white;
-          padding: 16px 24px;
-          border-radius: 8px;
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-          z-index: 10000;
-          font-family: system-ui, -apple-system, sans-serif;
-        `
-        successDiv.innerHTML = `
-          <div style="display: flex; align-items: center;">
-            <div style="font-size: 20px; margin-right: 12px;">✅</div>
-            <div>
-              <div style="font-weight: 600; margin-bottom: 4px;">Trip Created!</div>
-              <div style="font-size: 14px; opacity: 0.9;">Invitations sent to ${tripData.collaborators.length} collaborator(s)</div>
-            </div>
-          </div>
-        `
-        document.body.appendChild(successDiv)
+      setSuccess("Trip created successfully!")
 
-        // Remove notification after 3 seconds
-        setTimeout(() => {
-          if (successDiv.parentNode) {
-            successDiv.remove()
-          }
-        }, 3000)
-      }
-
-      addDebugInfo("Redirecting to dashboard...")
-
-      // Force redirect using window.location as backup
-      try {
+      // Redirect after a short delay
+      setTimeout(() => {
         router.push("/dashboard")
-        // Backup redirect after 1 second
-        setTimeout(() => {
-          if (window.location.pathname !== "/dashboard") {
-            addDebugInfo("Router.push failed, using window.location")
-            window.location.href = "/dashboard"
-          }
-        }, 1000)
-      } catch (routerError) {
-        addDebugInfo(`Router error: ${routerError}`)
-        window.location.href = "/dashboard"
-      }
+      }, 1500)
     } catch (error: any) {
-      addDebugInfo(`Error creating trip: ${error.message || error}`)
       console.error("Error creating trip:", error)
-      setError(`Failed to create trip: ${error.message || "Unknown error"}`)
+      setError(error.message || "Failed to create trip")
     } finally {
       setIsSaving(false)
     }
@@ -351,24 +237,12 @@ export default function NewTripPage() {
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Error Message */}
         {error && <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">{error}</div>}
 
-        {/* Debug Panel */}
-        {debugInfo.length > 0 && (
-          <Card className="mb-6 border-yellow-200 bg-yellow-50">
-            <CardHeader>
-              <CardTitle className="text-sm">Debug Information</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs space-y-1 max-h-60 overflow-y-auto">
-                {debugInfo.map((info, index) => (
-                  <div key={index} className="font-mono">
-                    {info}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+        {/* Success Message */}
+        {success && (
+          <div className="mb-6 p-4 bg-green-100 border border-green-400 text-green-700 rounded">{success}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-8">
@@ -555,8 +429,15 @@ export default function NewTripPage() {
                 Cancel
               </Button>
             </Link>
-            <Button type="submit" disabled={isSaving}>
-              {isSaving ? "Creating Trip..." : "Create Trip"}
+            <Button type="submit" disabled={isSaving} className="min-w-[120px]">
+              {isSaving ? (
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Creating...
+                </div>
+              ) : (
+                "Create Trip"
+              )}
             </Button>
           </div>
         </form>
@@ -564,3 +445,4 @@ export default function NewTripPage() {
     </div>
   )
 }
+
