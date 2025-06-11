@@ -20,13 +20,14 @@ export default function AgencyLoginPage() {
   const [error, setError] = useState("")
   const router = useRouter()
 
-  // Update the handleLogin function to properly handle the authentication flow
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setIsLoading(true)
 
     try {
+      console.log("Agency login attempt for:", email)
+
       if (!isSupabaseAvailable()) {
         // Mock login for agency - in demo mode
         if (email === "agency@example.com" && password === "password") {
@@ -46,20 +47,71 @@ export default function AgencyLoginPage() {
       }
 
       // Real Supabase authentication
-      const { user } = await authService.signIn(email, password)
+      const { user, error: signInError } = await authService.signIn(email, password)
+
+      if (signInError) {
+        throw new Error(signInError)
+      }
 
       if (user) {
+        console.log("Sign in successful, checking user role...")
+
         // Get user profile to check role
         const currentUser = await authService.getCurrentUser()
+        console.log("Current user:", currentUser)
+
         if (currentUser?.role === "agency") {
+          console.log("Agency user confirmed, redirecting...")
           router.push("/agency")
         } else {
-          setError("This account is not authorized for agency access")
+          // If user doesn't have agency role, let's check if they should be an agency user
+          // For demo purposes, if email contains "agency", make them an agency user
+          if (email.toLowerCase().includes("agency")) {
+            console.log("Converting user to agency role...")
+
+            // Update their role in the database
+            try {
+              if (isSupabaseAvailable()) {
+                const { supabase } = await import("@/lib/supabase")
+                await supabase.from("profiles").upsert({
+                  id: currentUser?.id || user.id,
+                  email: email,
+                  name: currentUser?.name || "Agency Admin",
+                  role: "agency",
+                })
+              }
+
+              // Update localStorage
+              const updatedUser = {
+                ...currentUser,
+                role: "agency" as const,
+              }
+              localStorage.setItem("mockUser", JSON.stringify(updatedUser))
+              localStorage.setItem("isAuthenticated", "true")
+
+              router.push("/agency")
+            } catch (updateError) {
+              console.error("Error updating user role:", updateError)
+              setError("Account found but couldn't set agency permissions. Please contact support.")
+            }
+          } else {
+            setError(
+              "This account is not authorized for agency access. Please use an agency account or contact support.",
+            )
+          }
         }
       }
     } catch (error: any) {
       console.error("Agency login error:", error)
-      setError(error.message || "Failed to sign in. Please check your credentials.")
+
+      // Handle email confirmation error specifically
+      if (error.message?.includes("Email not confirmed") || error.message?.includes("verification")) {
+        setError(
+          "Your account needs to be verified. Please check your email for a confirmation link, or contact support to activate your account manually.",
+        )
+      } else {
+        setError(error.message || "Failed to sign in. Please check your credentials.")
+      }
     } finally {
       setIsLoading(false)
     }
@@ -100,7 +152,12 @@ export default function AgencyLoginPage() {
             <CardDescription>Sign in to access the agency dashboard</CardDescription>
           </CardHeader>
           <CardContent>
-            {error && <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">{error}</div>}
+            {error && (
+              <Alert className="mb-4" variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
@@ -138,6 +195,9 @@ export default function AgencyLoginPage() {
                 <a href="/" className="text-blue-600 hover:underline font-medium">
                   Traveler login
                 </a>
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Need an agency account? Contact support or create an account with "agency" in the email address.
               </p>
             </div>
           </CardContent>
