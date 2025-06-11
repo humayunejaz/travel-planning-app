@@ -1,4 +1,4 @@
-import { supabase, isSupabaseAvailable } from "./supabase"
+import { supabase, isSupabaseAvailable, generateUserId } from "./supabase"
 import type { Database } from "./supabase"
 import { invitationsService } from "./invitations"
 import { emailService } from "./email"
@@ -18,87 +18,73 @@ export interface TripWithCollaborators extends Trip {
 
 export const tripsService = {
   async getUserTrips(userId: string): Promise<TripWithCollaborators[]> {
-    if (!isSupabaseAvailable() || !supabase) {
-      // Mock data for demo mode
-      const mockTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-      return mockTrips.filter((trip: any) => trip.userId === userId || trip.user_id === userId)
-    }
+    console.log("🔍 Getting trips for user:", userId)
 
-    try {
-      console.log("Fetching trips for user:", userId)
+    // Always try database first, then fallback to localStorage
+    let dbTrips: TripWithCollaborators[] = []
 
-      // Simple query without complex joins to avoid RLS issues
-      const { data: trips, error } = await supabase
-        .from("trips")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
+    if (isSupabaseAvailable() && supabase) {
+      try {
+        console.log("📊 Querying database...")
+        const { data: trips, error } = await supabase
+          .from("trips")
+          .select("*")
+          .order("created_at", { ascending: false })
 
-      if (error) {
-        console.error("Error in getUserTrips query:", error)
+        if (!error && trips) {
+          console.log(`✅ Found ${trips.length} trips in database`)
 
-        // If there's a database error, fall back to demo mode
-        if (error.message?.includes("infinite recursion") || error.message?.includes("policy")) {
-          console.log("Database error detected, falling back to localStorage")
-          const mockTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-          return mockTrips.filter((trip: any) => trip.userId === userId || trip.user_id === userId)
+          // Get collaborators for each trip
+          dbTrips = await Promise.all(
+            trips.map(async (trip) => {
+              let collaborators: string[] = []
+              try {
+                const { data: collabData } = await supabase
+                  .from("trip_collaborators")
+                  .select("email")
+                  .eq("trip_id", trip.id)
+                collaborators = collabData?.map((c) => c.email) || []
+              } catch (error) {
+                console.warn("Could not fetch collaborators:", error)
+              }
+
+              return {
+                ...trip,
+                collaborators,
+                countries: trip.countries || [],
+                cities: trip.cities || [],
+                status: (trip.status as "planning" | "confirmed" | "completed") || "planning",
+                user_id: trip.user_id,
+              }
+            }),
+          )
+        } else {
+          console.warn("Database query failed:", error)
         }
-
-        throw error
+      } catch (error) {
+        console.error("Database error:", error)
       }
-
-      console.log("Trips fetched:", trips)
-
-      // Get collaborators separately to avoid join issues
-      const tripsWithCollaborators = await Promise.all(
-        trips.map(async (trip) => {
-          let collaborators: string[] = []
-
-          try {
-            const { data: collabData } = await supabase
-              .from("trip_collaborators")
-              .select("email")
-              .eq("trip_id", trip.id)
-
-            collaborators = collabData?.map((c) => c.email) || []
-          } catch (collabError) {
-            console.warn("Could not fetch collaborators for trip:", trip.id, collabError)
-          }
-
-          return {
-            ...trip,
-            collaborators,
-            countries: trip.countries || [],
-            cities: trip.cities || [],
-            status: trip.status || "planning",
-            user_id: trip.user_id,
-          }
-        }),
-      )
-
-      // Also check localStorage for any trips that might be there but not in the database
-      const localTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-      const localTripsFiltered = localTrips.filter(
-        (localTrip: any) =>
-          (localTrip.userId === userId || localTrip.user_id === userId) &&
-          !tripsWithCollaborators.some((dbTrip) => dbTrip.id === localTrip.id),
-      )
-
-      // Combine database and localStorage trips
-      return [...tripsWithCollaborators, ...localTripsFiltered]
-    } catch (error) {
-      console.error("Error fetching user trips:", error)
-
-      // Fall back to demo mode on any error
-      console.log("Falling back to localStorage due to database error")
-      const mockTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-      return mockTrips.filter((trip: any) => trip.userId === userId || trip.user_id === userId)
     }
+
+    // Get localStorage trips
+    const localTrips = JSON.parse(localStorage.getItem("trips") || "[]")
+    const localTripsFiltered = localTrips.filter(
+      (localTrip: any) =>
+        (localTrip.userId === userId || localTrip.user_id === userId) &&
+        !dbTrips.some((dbTrip) => dbTrip.id === localTrip.id),
+    )
+
+    console.log(`📦 Found ${localTripsFiltered.length} trips in localStorage`)
+
+    // Combine and return
+    const allTrips = [...dbTrips, ...localTripsFiltered]
+    console.log(`🎯 Returning ${allTrips.length} total trips`)
+
+    return allTrips
   },
 
   async getAllTrips(): Promise<TripWithCollaborators[]> {
     if (!isSupabaseAvailable() || !supabase) {
-      // Mock data for demo mode
       return JSON.parse(localStorage.getItem("trips") || "[]")
     }
 
@@ -110,7 +96,6 @@ export const tripsService = {
         return JSON.parse(localStorage.getItem("trips") || "[]")
       }
 
-      // Get collaborators and user info separately
       const tripsWithDetails = await Promise.all(
         trips.map(async (trip) => {
           let collaborators: string[] = []
@@ -122,7 +107,6 @@ export const tripsService = {
               .from("trip_collaborators")
               .select("email")
               .eq("trip_id", trip.id)
-
             collaborators = collabData?.map((c) => c.email) || []
           } catch (error) {
             console.warn("Could not fetch collaborators:", error)
@@ -136,8 +120,8 @@ export const tripsService = {
               .single()
 
             if (profileData) {
-              user_name = profileData.name
-              user_email = profileData.email
+              user_name = profileData.name || "Unknown User"
+              user_email = profileData.email || "No email"
             }
           } catch (error) {
             console.warn("Could not fetch user profile:", error)
@@ -148,7 +132,7 @@ export const tripsService = {
             collaborators,
             countries: trip.countries || [],
             cities: trip.cities || [],
-            status: trip.status || "planning",
+            status: (trip.status as "planning" | "confirmed" | "completed") || "planning",
             user_id: trip.user_id,
             user_name,
             user_email,
@@ -164,30 +148,23 @@ export const tripsService = {
   },
 
   async createTrip(trip: Omit<TripInsert, "user_id">, collaborators: string[], userId: string): Promise<Trip> {
-    console.log("🚀 === CREATE TRIP WITH DETAILED DEBUGGING ===")
+    console.log("🚀 === SIMPLIFIED TRIP CREATION (LOCALSTORAGE FIRST) ===")
     console.log("📝 Trip data:", trip)
-    console.log("👥 Collaborators:", collaborators)
     console.log("👤 User ID:", userId)
 
-    // Create a trip object for both database and localStorage
-    const tripData = {
+    // Always save to localStorage first - this always works
+    const localTripId = generateUserId()
+    const localTrip = {
+      id: localTripId,
       title: trip.title,
       description: trip.description || "",
       start_date: trip.start_date,
       end_date: trip.end_date,
       user_id: userId,
+      userId: userId, // Keep both for compatibility
       countries: trip.countries || [],
       cities: trip.cities || [],
-      status: "planning" as const,
-    }
-
-    // Always save to localStorage first for reliability
-    const localTripId = Date.now().toString()
-    const localTrip = {
-      id: localTripId,
-      ...tripData,
-      userId: userId, // Add both formats for compatibility
-      user_id: userId,
+      status: "planning",
       collaborators,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -196,297 +173,164 @@ export const tripsService = {
     const existingTrips = JSON.parse(localStorage.getItem("trips") || "[]")
     existingTrips.push(localTrip)
     localStorage.setItem("trips", JSON.stringify(existingTrips))
-    console.log("✅ Trip saved to localStorage with ID:", localTripId)
+    console.log("✅ Saved to localStorage with ID:", localTripId)
 
-    // Try to save to database if available
+    // Try database only if we have a real authenticated user
     if (isSupabaseAvailable() && supabase) {
       try {
-        console.log("🔍 Checking Supabase connection...")
-        const { data: connectionTest, error: connectionError } = await supabase
-          .from("profiles")
-          .select("count")
-          .limit(1)
+        console.log("🔍 Checking if user is authenticated...")
 
-        if (connectionError) {
-          console.error("❌ Supabase connection test failed:", connectionError)
-          return localTrip
+        // Get the current authenticated user
+        const {
+          data: { user: authUser },
+          error: authError,
+        } = await supabase.auth.getUser()
+
+        if (authError || !authUser) {
+          console.log("⚠️ No authenticated user, skipping database save")
+          return localTrip as Trip
         }
 
-        console.log("✅ Supabase connection OK")
-        console.log("💾 Attempting database insertion with simplified data...")
+        console.log("✅ Authenticated user found:", authUser.id)
 
-        // Try a simplified insertion first
-        const { data: newTrip, error } = await supabase
-          .from("trips")
-          .insert({
-            title: trip.title,
-            description: trip.description || "",
-            start_date: trip.start_date,
-            end_date: trip.end_date,
-            user_id: userId,
-            // Omit arrays to test if that's causing issues
-          })
-          .select()
-          .single()
+        // Use the authenticated user's ID
+        const tripData: TripInsert = {
+          title: trip.title,
+          description: trip.description || "",
+          start_date: trip.start_date,
+          end_date: trip.end_date,
+          user_id: authUser.id, // Use the real auth user ID
+          countries: trip.countries || [],
+          cities: trip.cities || [],
+          status: "planning",
+        }
+
+        console.log("📤 Inserting trip with auth user ID:", tripData)
+
+        const { data: newTrip, error } = await supabase.from("trips").insert(tripData).select().single()
 
         if (error) {
           console.error("❌ Database insertion failed:", error)
-
-          // Try an even simpler insertion without dates
-          console.log("🔄 Trying even simpler insertion...")
-          const { data: simpleTrip, error: simpleError } = await supabase
-            .from("trips")
-            .insert({
-              title: trip.title,
-              description: trip.description || "",
-              user_id: userId,
-            })
-            .select()
-            .single()
-
-          if (simpleError) {
-            console.error("❌ Simple insertion also failed:", simpleError)
-
-            // Check if RLS might be the issue
-            console.log("🔒 Testing if RLS is the issue...")
-            const { data: authData } = await supabase.auth.getUser()
-            console.log("🔑 Current auth user:", authData?.user?.id)
-            console.log("👤 Trying to insert with user_id:", userId)
-
-            return localTrip
-          }
-
-          console.log("✅ Simple insertion worked! Trip created:", simpleTrip)
-
-          // Update the trip with remaining fields
-          const { data: updatedTrip, error: updateError } = await supabase
-            .from("trips")
-            .update({
-              start_date: trip.start_date,
-              end_date: trip.end_date,
-              countries: trip.countries || [],
-              cities: trip.cities || [],
-            })
-            .eq("id", simpleTrip.id)
-            .select()
-            .single()
-
-          if (updateError) {
-            console.warn("⚠️ Could not update with full data:", updateError)
-            return simpleTrip
-          }
-
-          console.log("✅ Trip updated with full data:", updatedTrip)
-
-          // Process collaborators in background
-          if (collaborators.length > 0) {
-            setTimeout(() => {
-              this.processCollaboratorsWithDatabase(updatedTrip.id, updatedTrip.title, collaborators, userId)
-            }, 100)
-          }
-
-          return updatedTrip
+          console.log("✅ But localStorage version is available")
+          return localTrip as Trip
         }
 
-        console.log("✅ Trip created in database:", newTrip)
+        console.log("✅ Database insertion successful:", newTrip)
 
-        // Now try to update with arrays
-        if (trip.countries?.length > 0 || trip.cities?.length > 0) {
-          console.log("🔄 Updating with arrays data...")
-          const { data: updatedTrip, error: updateError } = await supabase
-            .from("trips")
-            .update({
-              countries: trip.countries || [],
-              cities: trip.cities || [],
-            })
-            .eq("id", newTrip.id)
-            .select()
-            .single()
-
-          if (updateError) {
-            console.warn("⚠️ Could not update arrays:", updateError)
-          } else {
-            console.log("✅ Arrays updated successfully")
-          }
-        }
-
-        // Process collaborators in background
+        // Add collaborators in background
         if (collaborators.length > 0) {
           setTimeout(() => {
-            this.processCollaboratorsWithDatabase(newTrip.id, newTrip.title, collaborators, userId)
+            this.addCollaborators(newTrip.id, collaborators)
           }, 100)
         }
 
         return newTrip
       } catch (error) {
-        console.error("❌ Unexpected error during database creation:", error)
+        console.error("❌ Database error:", error)
+        console.log("✅ But localStorage version is available")
       }
-    } else {
-      console.log("⚠️ Supabase not available, using localStorage only")
     }
 
     // Process collaborators for localStorage trip
     if (collaborators.length > 0) {
       setTimeout(() => {
-        this.processCollaboratorsSimple(localTripId, trip.title, collaborators)
+        this.addCollaborators(localTripId, collaborators)
       }, 100)
     }
 
-    return localTrip
+    return localTrip as Trip
   },
 
-  async processCollaboratorsWithDatabase(tripId: string, tripTitle: string, collaborators: string[], userId: string) {
-    console.log("📧 === DATABASE COLLABORATOR PROCESSING ===")
+  async addCollaborators(tripId: string, collaborators: string[]) {
+    console.log("👥 Adding collaborators for trip:", tripId)
 
     for (const email of collaborators) {
       try {
-        console.log(`📨 Processing ${email}...`)
-
-        // Add to database collaborators table
+        // Add to database if available
         if (isSupabaseAvailable() && supabase) {
-          try {
-            const { error: collabError } = await supabase.from("trip_collaborators").insert({
-              trip_id: tripId,
-              email: email,
-            })
-
-            if (collabError) {
-              console.error(`❌ Error adding collaborator ${email} to database:`, collabError)
-            } else {
-              console.log(`✅ ${email} added to collaborators table`)
-            }
-          } catch (dbError) {
-            console.warn(`⚠️ Database error for ${email}:`, dbError)
-          }
+          await supabase.from("trip_collaborators").insert({
+            trip_id: tripId,
+            email: email,
+          })
         }
 
         // Create invitation
-        const invitation = await invitationsService.createInvitation(tripId, email, "demo@example.com")
-        console.log(`✅ Invitation created for ${email}`)
+        await invitationsService.createInvitation(tripId, email, "demo@example.com")
 
-        // Try to send email (don't let it block)
+        // Send email (don't wait for it)
         emailService
           .sendTripInvitation({
             recipientEmail: email,
-            tripTitle: tripTitle,
+            tripTitle: "Trip Invitation",
             inviterName: "Demo User",
             inviterEmail: "demo@example.com",
             tripId: tripId,
-            invitationToken: invitation.token,
+            invitationToken: "demo-token",
           })
-          .catch((error) => {
-            console.warn(`⚠️ Email failed for ${email}:`, error)
-          })
+          .catch(console.warn)
       } catch (error) {
-        console.warn(`⚠️ Failed to process ${email}:`, error)
+        console.warn(`Failed to process collaborator ${email}:`, error)
       }
     }
-
-    console.log("🎉 Database collaborator processing completed")
-  },
-
-  async processCollaboratorsSimple(tripId: string, tripTitle: string, collaborators: string[]) {
-    console.log("📧 === SIMPLE COLLABORATOR PROCESSING ===")
-
-    for (const email of collaborators) {
-      try {
-        console.log(`📨 Processing ${email}...`)
-
-        // Create invitation
-        const invitation = await invitationsService.createInvitation(tripId, email, "demo@example.com")
-        console.log(`✅ Invitation created for ${email}`)
-
-        // Try to send email (don't let it block)
-        emailService
-          .sendTripInvitation({
-            recipientEmail: email,
-            tripTitle: tripTitle,
-            inviterName: "Demo User",
-            inviterEmail: "demo@example.com",
-            tripId: tripId,
-            invitationToken: invitation.token,
-          })
-          .catch((error) => {
-            console.warn(`⚠️ Email failed for ${email}:`, error)
-          })
-      } catch (error) {
-        console.warn(`⚠️ Failed to process ${email}:`, error)
-      }
-    }
-
-    console.log("🎉 Collaborator processing completed")
   },
 
   async updateTrip(tripId: string, updates: TripUpdate, collaborators?: string[]): Promise<Trip> {
-    if (!isSupabaseAvailable() || !supabase) {
-      // Mock update for demo mode
-      const trips = JSON.parse(localStorage.getItem("trips") || "[]")
-      const tripIndex = trips.findIndex((t: any) => t.id === tripId)
-      if (tripIndex >= 0) {
-        trips[tripIndex] = { ...trips[tripIndex], ...updates }
-        if (collaborators !== undefined) {
-          trips[tripIndex].collaborators = collaborators
-        }
-        localStorage.setItem("trips", JSON.stringify(trips))
-        return trips[tripIndex]
-      }
-      throw new Error("Trip not found")
-    }
+    // Try database first
+    if (isSupabaseAvailable() && supabase) {
+      try {
+        const { data: updatedTrip, error } = await supabase
+          .from("trips")
+          .update(updates)
+          .eq("id", tripId)
+          .select()
+          .single()
 
-    try {
-      const { data: updatedTrip, error } = await supabase
-        .from("trips")
-        .update(updates)
-        .eq("id", tripId)
-        .select()
-        .single()
-
-      if (error) throw error
-
-      // Update collaborators if provided
-      if (collaborators !== undefined) {
-        try {
-          // First delete existing collaborators
-          await supabase.from("trip_collaborators").delete().eq("trip_id", tripId)
-
-          // Then add new ones
-          if (collaborators.length > 0) {
-            await supabase.from("trip_collaborators").insert(
-              collaborators.map((email) => ({
-                trip_id: tripId,
-                email: email,
-              })),
-            )
+        if (!error) {
+          // Update collaborators if provided
+          if (collaborators !== undefined) {
+            await supabase.from("trip_collaborators").delete().eq("trip_id", tripId)
+            if (collaborators.length > 0) {
+              await supabase
+                .from("trip_collaborators")
+                .insert(collaborators.map((email) => ({ trip_id: tripId, email })))
+            }
           }
-        } catch (collabError) {
-          console.warn("Could not update collaborators:", collabError)
+          return updatedTrip
         }
+      } catch (error) {
+        console.error("Database update failed:", error)
       }
-
-      return updatedTrip
-    } catch (error) {
-      console.error("Error updating trip:", error)
-      throw error
     }
+
+    // Fallback to localStorage
+    const trips = JSON.parse(localStorage.getItem("trips") || "[]")
+    const tripIndex = trips.findIndex((t: any) => t.id === tripId)
+    if (tripIndex >= 0) {
+      trips[tripIndex] = { ...trips[tripIndex], ...updates }
+      if (collaborators !== undefined) {
+        trips[tripIndex].collaborators = collaborators
+      }
+      localStorage.setItem("trips", JSON.stringify(trips))
+      return trips[tripIndex]
+    }
+
+    throw new Error("Trip not found")
   },
 
   async deleteTrip(tripId: string): Promise<void> {
+    // Delete from database
+    if (isSupabaseAvailable() && supabase) {
+      try {
+        await supabase.from("trips").delete().eq("id", tripId)
+      } catch (error) {
+        console.warn("Could not delete from database:", error)
+      }
+    }
+
     // Delete from localStorage
     const trips = JSON.parse(localStorage.getItem("trips") || "[]")
     const filteredTrips = trips.filter((t: any) => t.id !== tripId)
     localStorage.setItem("trips", JSON.stringify(filteredTrips))
-
-    // Try to delete from database if available
-    if (isSupabaseAvailable() && supabase) {
-      try {
-        const { error } = await supabase.from("trips").delete().eq("id", tripId)
-        if (error) {
-          console.warn("Could not delete trip from database:", error)
-        }
-      } catch (error) {
-        console.warn("Error during database deletion:", error)
-      }
-    }
   },
 
   async getTripById(tripId: string): Promise<TripWithCollaborators | null> {
@@ -495,20 +339,15 @@ export const tripsService = {
     // Try database first
     if (isSupabaseAvailable() && supabase) {
       try {
-        console.log("📊 Checking database for trip...")
         const { data: trip, error } = await supabase.from("trips").select("*").eq("id", tripId).single()
 
         if (!error && trip) {
-          console.log("✅ Found trip in database:", trip)
-
-          // Get collaborators separately
           let collaborators: string[] = []
           try {
             const { data: collabData } = await supabase
               .from("trip_collaborators")
               .select("email")
               .eq("trip_id", trip.id)
-
             collaborators = collabData?.map((c) => c.email) || []
           } catch (error) {
             console.warn("Could not fetch collaborators:", error)
@@ -519,24 +358,20 @@ export const tripsService = {
             collaborators,
             countries: trip.countries || [],
             cities: trip.cities || [],
-            status: trip.status || "planning",
+            status: (trip.status as "planning" | "confirmed" | "completed") || "planning",
             user_id: trip.user_id,
           }
         }
-
-        console.log("❌ Trip not found in database:", error)
       } catch (error) {
         console.error("Database error:", error)
       }
     }
 
     // Fallback to localStorage
-    console.log("📦 Checking localStorage for trip...")
     const trips = JSON.parse(localStorage.getItem("trips") || "[]")
     const localTrip = trips.find((t: any) => t.id === tripId)
 
     if (localTrip) {
-      console.log("✅ Found trip in localStorage:", localTrip)
       return {
         id: localTrip.id,
         title: localTrip.title,
@@ -553,7 +388,6 @@ export const tripsService = {
       }
     }
 
-    console.log("❌ Trip not found anywhere")
     return null
   },
 }
