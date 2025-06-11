@@ -15,7 +15,38 @@ export const tripsService = {
     console.log("📝 Trip data:", trip)
     console.log("👤 User ID:", userId)
 
-    // Always save to localStorage first
+    // Try database save first
+    if (isSupabaseAvailable() && supabase) {
+      try {
+        console.log("💾 Attempting database save...")
+
+        const tripData: TripInsert = {
+          user_id: userId,
+          title: trip.title,
+          description: trip.description || "",
+          start_date: trip.start_date,
+          end_date: trip.end_date,
+          countries: trip.countries || [],
+          cities: trip.cities || [],
+          status: "planning",
+        }
+
+        const { data: newTrip, error } = await supabase.from("trips").insert(tripData).select().single()
+
+        if (!error && newTrip) {
+          console.log("✅ Database save successful:", newTrip)
+          // Don't save to localStorage if database save worked
+          return newTrip
+        } else {
+          console.error("❌ Database save failed:", error)
+        }
+      } catch (error) {
+        console.error("❌ Database error:", error)
+      }
+    }
+
+    // Only save to localStorage if database failed
+    console.log("📦 Falling back to localStorage...")
     const localTripId = generateSimpleId()
     const localTrip = {
       id: localTripId,
@@ -32,41 +63,10 @@ export const tripsService = {
       updated_at: new Date().toISOString(),
     }
 
-    // Save to localStorage
     const existingTrips = JSON.parse(localStorage.getItem("trips") || "[]")
     existingTrips.push(localTrip)
     localStorage.setItem("trips", JSON.stringify(existingTrips))
     console.log("✅ Saved to localStorage")
-
-    // Try simple database save
-    if (isSupabaseAvailable() && supabase) {
-      try {
-        console.log("💾 Attempting simple database save...")
-
-        const tripData: TripInsert = {
-          user_id: userId,
-          title: trip.title,
-          description: trip.description || "",
-          start_date: trip.start_date,
-          end_date: trip.end_date,
-          countries: trip.countries || [],
-          cities: trip.cities || [],
-          status: "planning",
-        }
-
-        const { data: newTrip, error } = await supabase.from("trips").insert(tripData).select().single()
-
-        if (error) {
-          console.error("❌ Database save failed:", error)
-          return localTrip as Trip
-        }
-
-        console.log("✅ Database save successful:", newTrip)
-        return newTrip
-      } catch (error) {
-        console.error("❌ Database error:", error)
-      }
-    }
 
     return localTrip as Trip
   },
@@ -98,17 +98,24 @@ export const tripsService = {
       }
     }
 
-    // Get localStorage trips
+    // Get localStorage trips, but exclude ones that exist in database
     const localTrips = JSON.parse(localStorage.getItem("trips") || "[]")
-    const localTripsFiltered = localTrips.filter(
-      (localTrip: any) => localTrip.userId === userId || localTrip.user_id === userId,
-    )
+    const localTripsFiltered = localTrips.filter((localTrip: any) => {
+      const matchesUser = localTrip.userId === userId || localTrip.user_id === userId
+      const notInDatabase = !dbTrips.some(
+        (dbTrip) =>
+          dbTrip.title === localTrip.title &&
+          dbTrip.start_date === localTrip.start_date &&
+          dbTrip.end_date === localTrip.end_date,
+      )
+      return matchesUser && notInDatabase
+    })
 
-    console.log(`📦 Found ${localTripsFiltered.length} trips in localStorage`)
+    console.log(`📦 Found ${localTripsFiltered.length} unique localStorage trips`)
 
-    // Combine results
+    // Combine results (no duplicates)
     const allTrips = [...dbTrips, ...localTripsFiltered]
-    console.log(`🎯 Returning ${allTrips.length} total trips`)
+    console.log(`🎯 Returning ${allTrips.length} total trips (no duplicates)`)
 
     return allTrips
   },
@@ -177,7 +184,7 @@ export const tripsService = {
         if (!error && updatedTrip) {
           console.log("✅ Database update successful")
 
-          // Update localStorage too
+          // Update localStorage too (in case there's a copy there)
           const trips = JSON.parse(localStorage.getItem("trips") || "[]")
           const tripIndex = trips.findIndex((t: any) => t.id === tripId)
           if (tripIndex >= 0) {
