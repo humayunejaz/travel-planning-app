@@ -139,6 +139,65 @@ export default function NewTripPage() {
     })
   }
 
+  const testDatabaseConnection = async () => {
+    addDebugInfo("=== TESTING DATABASE CONNECTION ===")
+    try {
+      const { supabase } = await import("@/lib/supabase")
+
+      // Test basic connection
+      const { data: connectionTest, error: connectionError } = await supabase.from("profiles").select("count").limit(1)
+
+      if (connectionError) {
+        addDebugInfo(`❌ Connection test failed: ${connectionError.message}`)
+        return false
+      }
+
+      addDebugInfo("✅ Basic connection OK")
+
+      // Test auth
+      const { data: authData } = await supabase.auth.getUser()
+      addDebugInfo(`🔑 Auth user: ${authData?.user?.id || "none"}`)
+
+      // Test trips table access
+      const { data: tripsTest, error: tripsError } = await supabase.from("trips").select("count").limit(1)
+
+      if (tripsError) {
+        addDebugInfo(`❌ Trips table access failed: ${tripsError.message}`)
+        return false
+      }
+
+      addDebugInfo("✅ Trips table access OK")
+
+      // Test simple insertion
+      const testTrip = {
+        title: `Test Trip ${Date.now()}`,
+        description: "Test description",
+        user_id: user?.id || "test-user-id",
+      }
+
+      addDebugInfo(`🧪 Testing insertion with: ${JSON.stringify(testTrip)}`)
+
+      const { data: insertTest, error: insertError } = await supabase.from("trips").insert(testTrip).select().single()
+
+      if (insertError) {
+        addDebugInfo(`❌ Test insertion failed: ${insertError.message}`)
+        addDebugInfo(`Error details: ${JSON.stringify(insertError)}`)
+        return false
+      }
+
+      addDebugInfo(`✅ Test insertion successful: ${insertTest.id}`)
+
+      // Clean up test trip
+      await supabase.from("trips").delete().eq("id", insertTest.id)
+      addDebugInfo("🧹 Test trip cleaned up")
+
+      return true
+    } catch (error: any) {
+      addDebugInfo(`❌ Database test error: ${error.message}`)
+      return false
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -164,7 +223,10 @@ export default function NewTripPage() {
       }
 
       addDebugInfo(`User validated: ${user.email} (${user.id})`)
-      addDebugInfo(`Trip data: ${JSON.stringify(tripData)}`)
+
+      // Test database connection first
+      const dbWorking = await testDatabaseConnection()
+      addDebugInfo(`Database test result: ${dbWorking ? "PASS" : "FAIL"}`)
 
       // Create the trip object
       const tripToCreate = {
@@ -176,6 +238,7 @@ export default function NewTripPage() {
         cities: tripData.cities,
       }
 
+      addDebugInfo(`Trip data: ${JSON.stringify(tripToCreate)}`)
       addDebugInfo("Calling tripsService.createTrip...")
 
       // Create new trip with timeout
@@ -183,7 +246,7 @@ export default function NewTripPage() {
 
       // Add a timeout to prevent infinite waiting
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Trip creation timed out after 10 seconds")), 10000)
+        setTimeout(() => reject(new Error("Trip creation timed out after 15 seconds")), 15000)
       })
 
       const createdTrip = await Promise.race([createTripPromise, timeoutPromise])
@@ -297,7 +360,7 @@ export default function NewTripPage() {
               <CardTitle className="text-sm">Debug Information</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-xs space-y-1 max-h-40 overflow-y-auto">
+              <div className="text-xs space-y-1 max-h-60 overflow-y-auto">
                 {debugInfo.map((info, index) => (
                   <div key={index} className="font-mono">
                     {info}
