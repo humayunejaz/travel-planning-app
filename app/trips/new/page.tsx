@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,7 @@ export default function NewTripPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const isSubmittingRef = useRef(false) // Prevent double submission
 
   const [tripData, setTripData] = useState({
     title: "",
@@ -136,6 +137,14 @@ export default function NewTripPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Prevent double submission
+    if (isSubmittingRef.current || isSaving) {
+      console.log("⚠️ Form already being submitted, ignoring...")
+      return
+    }
+
+    isSubmittingRef.current = true
     console.log("=== FORM SUBMITTED ===")
 
     setError("")
@@ -197,6 +206,7 @@ export default function NewTripPage() {
       setError(error.message || "Failed to create trip")
     } finally {
       setIsSaving(false)
+      isSubmittingRef.current = false // Reset the flag
     }
   }
 
@@ -429,7 +439,7 @@ export default function NewTripPage() {
                 Cancel
               </Button>
             </Link>
-            <Button type="submit" disabled={isSaving} className="min-w-[120px]">
+            <Button type="submit" disabled={isSaving || isSubmittingRef.current} className="min-w-[120px]">
               {isSaving ? (
                 <div className="flex items-center">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
