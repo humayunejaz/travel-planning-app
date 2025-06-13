@@ -5,37 +5,85 @@ import type React from "react"
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { signIn } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plane, AlertCircle } from "lucide-react"
+import { Plane, MapPin, Users, Building } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 
 export default function LoginPage() {
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState("")
   const router = useRouter()
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError("")
     setIsLoading(true)
-    setError(null)
 
     try {
-      const formData = new FormData(e.currentTarget)
-      const result = await signIn(formData)
+      console.log("Starting login process...")
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-      if (result.error) {
-        setError(result.error)
+      if (error) {
+        console.error("Login error:", error)
+        setError(error.message || "Failed to sign in. Please check your credentials.")
         setIsLoading(false)
         return
       }
 
-      router.push("/dashboard")
-    } catch (err: any) {
-      setError(err.message || "An error occurred during sign in")
+      if (data.user) {
+        console.log("Login successful, getting user profile...")
+
+        // Check if profile exists, create if it doesn't
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", data.user.id)
+          .single()
+
+        if (profileError && !profileError.message.includes("No rows found")) {
+          console.error("Error fetching profile:", profileError)
+        }
+
+        if (!profile) {
+          console.log("Profile not found, creating one...")
+          const { error: insertError } = await supabase.from("profiles").insert({
+            id: data.user.id,
+            email: data.user.email || "",
+            name: data.user.user_metadata?.name || data.user.email?.split("@")[0] || "User",
+            role: (data.user.user_metadata?.role as "traveler" | "agency") || "traveler",
+          })
+
+          if (insertError) {
+            console.error("Error creating profile:", insertError)
+          } else {
+            console.log("Profile created successfully")
+          }
+        }
+
+        // Get the current user to determine role
+        const { data: userData } = await supabase.from("profiles").select("*").eq("id", data.user.id).single()
+        console.log("Current user:", userData)
+
+        if (userData?.role === "agency") {
+          console.log("Redirecting to agency dashboard")
+          router.push("/agency")
+        } else {
+          console.log("Redirecting to user dashboard")
+          router.push("/dashboard")
+        }
+      }
+    } catch (error: any) {
+      console.error("Login error:", error)
+      setError(error.message || "Failed to sign in. Please check your credentials.")
+    } finally {
       setIsLoading(false)
     }
   }
@@ -48,49 +96,84 @@ export default function LoginPage() {
             <Plane className="h-8 w-8 text-blue-600 mr-2" />
             <h1 className="text-3xl font-bold text-gray-900">TravelPlan</h1>
           </div>
-          <p className="text-gray-600">Plan your next adventure</p>
+          <p className="text-gray-600">Plan your perfect journey</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>Enter your credentials to access your account</CardDescription>
+            <CardTitle>Welcome back</CardTitle>
+            <CardDescription>Sign in to your account to continue</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit}>
-              {error && (
-                <Alert className="mb-4 border-red-200 bg-red-50">
-                  <AlertCircle className="h-4 w-4 text-red-500" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
+            {error && <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">{error}</div>}
 
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" name="email" type="email" placeholder="your@email.com" required />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input id="password" name="password" type="password" placeholder="Your password" required />
-                </div>
-
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading ? "Signing in..." : "Sign In"}
-                </Button>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? "Signing in..." : "Sign In"}
+              </Button>
             </form>
+
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-600">
+                {"Don't have an account? "}
+                <Link href="/register" className="text-blue-600 hover:underline font-medium">
+                  Sign up
+                </Link>
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Choose between Traveler or Travel Agency account during registration
+              </p>
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-gray-200">
+              <div className="flex justify-center">
+                <Link href="/agency/login">
+                  <Button variant="outline" className="flex items-center">
+                    <Building className="h-4 w-4 mr-2" />
+                    Travel Agency Login
+                  </Button>
+                </Link>
+              </div>
+            </div>
           </CardContent>
-          <CardFooter className="flex justify-center">
-            <p className="text-sm text-gray-600">
-              Don&apos;t have an account?{" "}
-              <Link href="/register" className="text-blue-600 hover:underline">
-                Register
-              </Link>
-            </p>
-          </CardFooter>
         </Card>
+
+        <div className="mt-8 text-center">
+          <div className="flex items-center justify-center space-x-6 text-sm text-gray-500">
+            <div className="flex items-center">
+              <MapPin className="h-4 w-4 mr-1" />
+              Plan destinations
+            </div>
+            <div className="flex items-center">
+              <Users className="h-4 w-4 mr-1" />
+              Invite friends
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
