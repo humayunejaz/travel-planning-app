@@ -1,9 +1,11 @@
-"use server"
+import { supabase } from "./supabase"
 
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
-import { redirect } from "next/navigation"
-import { revalidatePath } from "next/cache"
+export interface User {
+  id: string
+  email: string
+  name: string
+  role: "traveler" | "agency"
+}
 
 export async function signUp(formData: FormData) {
   const email = formData.get("email") as string
@@ -11,45 +13,29 @@ export async function signUp(formData: FormData) {
   const name = formData.get("name") as string
   const role = (formData.get("role") as string) || "traveler"
 
-  const cookieStore = cookies()
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value
-      },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options })
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options })
-      },
-    },
-  })
-
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm`,
-      data: {
-        name,
-        role,
-      },
-    },
-  })
-
-  if (error) {
-    return { error: error.message }
-  }
-
-  // Create profile immediately (don't wait for email confirmation)
   try {
-    const { data: userData } = await supabase.auth.getUser()
-    if (userData?.user) {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/auth/confirm`,
+        data: {
+          name,
+          role,
+        },
+      },
+    })
+
+    if (error) {
+      return { error: error.message }
+    }
+
+    // Create profile immediately (don't wait for email confirmation)
+    if (data?.user) {
       const { error: profileError } = await supabase
         .from("profiles")
         .insert({
-          id: userData.user.id,
+          id: data.user.id,
           email,
           name,
           role,
@@ -60,52 +46,37 @@ export async function signUp(formData: FormData) {
         console.error("Error creating profile:", profileError)
       }
     }
-  } catch (err) {
-    console.error("Error creating profile:", err)
-  }
 
-  return { success: true }
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error during signup:", err)
+    return { error: err.message || "An error occurred during signup" }
+  }
 }
 
 export async function signIn(formData: FormData) {
   const email = formData.get("email") as string
   const password = formData.get("password") as string
 
-  const cookieStore = cookies()
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value
-      },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options })
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options })
-      },
-    },
-  })
-
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  })
-
-  if (error) {
-    return { error: error.message }
-  }
-
-  // Check if profile exists, create if it doesn't
   try {
-    const { data: userData } = await supabase.auth.getUser()
-    if (userData?.user) {
-      const { data: profile } = await supabase.from("profiles").select().eq("id", userData.user.id).single()
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (error) {
+      return { error: error.message }
+    }
+
+    // Check if profile exists, create if it doesn't
+    if (data?.user) {
+      const { data: profile } = await supabase.from("profiles").select().eq("id", data.user.id).single()
 
       if (!profile) {
         const { error: profileError } = await supabase
           .from("profiles")
           .insert({
-            id: userData.user.id,
+            id: data.user.id,
             email,
             name: email.split("@")[0], // Use part of email as name if not provided
             role: "traveler",
@@ -117,85 +88,69 @@ export async function signIn(formData: FormData) {
         }
       }
     }
-  } catch (err) {
-    console.error("Error checking/creating profile:", err)
-  }
 
-  revalidatePath("/")
-  redirect("/dashboard")
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error during signin:", err)
+    return { error: err.message || "An error occurred during sign in" }
+  }
 }
 
 export async function signOut() {
-  const cookieStore = cookies()
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value
-      },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options })
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options })
-      },
-    },
-  })
-
-  await supabase.auth.signOut()
-  revalidatePath("/")
-  redirect("/")
+  try {
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      console.error("Error during signout:", error)
+      return { error: error.message }
+    }
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error during signout:", err)
+    return { error: err.message || "An error occurred during sign out" }
+  }
 }
 
 export async function getUser() {
-  const cookieStore = cookies()
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value
-      },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options })
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options })
-      },
-    },
-  })
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+    if (user) {
+      // Check if profile exists, create if it doesn't
+      const { data: profile } = await supabase.from("profiles").select().eq("id", user.id).single()
 
-  if (user) {
-    // Check if profile exists, create if it doesn't
-    const { data: profile } = await supabase.from("profiles").select().eq("id", user.id).single()
+      if (!profile) {
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .insert({
+            id: user.id,
+            email: user.email!,
+            name: user.user_metadata.name || user.email!.split("@")[0],
+            role: user.user_metadata.role || "traveler",
+          })
+          .select()
 
-    if (!profile) {
-      const { error: profileError } = await supabase
-        .from("profiles")
-        .insert({
+        if (profileError) {
+          console.error("Error creating profile during getUser:", profileError)
+        }
+      }
+
+      return {
+        ...user,
+        profile: profile || {
           id: user.id,
-          email: user.email!,
+          email: user.email,
           name: user.user_metadata.name || user.email!.split("@")[0],
           role: user.user_metadata.role || "traveler",
-        })
-        .select()
-
-      if (profileError) {
-        console.error("Error creating profile during getUser:", profileError)
+        },
       }
     }
 
-    return {
-      ...user,
-      profile: profile || {
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata.name || user.email!.split("@")[0],
-        role: user.user_metadata.role || "traveler",
-      },
-    }
+    return null
+  } catch (err) {
+    console.error("Error getting user:", err)
+    return null
   }
-
-  return null
 }
+
