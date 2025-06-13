@@ -2,16 +2,19 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plane, AlertCircle, CheckCircle, Users, Building } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { Plane, AlertCircle, CheckCircle, Users, MapPin, Building, Mail } from "lucide-react"
+import { authService } from "@/lib/auth"
+import { invitationsService } from "@/lib/invitations"
+import { tripsService } from "@/lib/trips"
+import { isSupabaseAvailable } from "@/lib/supabase"
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
@@ -24,12 +27,71 @@ export default function RegisterPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false)
+  const [invitation, setInvitation] = useState<any>(null)
+  const [tripDetails, setTripDetails] = useState<any>(null)
+  const [isLoadingInvitation, setIsLoadingInvitation] = useState(false)
+
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const invitationToken = searchParams.get("invitation")
+  const tripId = searchParams.get("trip")
+
+  console.log("🔗 Register page loaded with params:", {
+    invitationToken,
+    tripId,
+    fullUrl: typeof window !== "undefined" ? window.location.href : "server-side",
+  })
+
+  useEffect(() => {
+    const loadInvitation = async () => {
+      if (invitationToken) {
+        setIsLoadingInvitation(true)
+        try {
+          console.log("📧 Loading invitation with token:", invitationToken)
+
+          const invitationData = await invitationsService.getInvitationByToken(invitationToken)
+          console.log("📋 Invitation data:", invitationData)
+
+          if (invitationData) {
+            setInvitation(invitationData)
+
+            // Pre-fill email if available
+            setFormData((prev) => ({
+              ...prev,
+              email: invitationData.email,
+            }))
+
+            // Load trip details
+            if (invitationData.trip_id) {
+              console.log("🗺️ Loading trip details for:", invitationData.trip_id)
+              const trip = await tripsService.getTripById(invitationData.trip_id)
+              console.log("🎯 Trip details:", trip)
+              setTripDetails(trip)
+            }
+          } else {
+            console.error("❌ Invalid or expired invitation")
+            setError("Invalid or expired invitation link. Please ask for a new invitation.")
+          }
+        } catch (error) {
+          console.error("💥 Error loading invitation:", error)
+          setError("Failed to load invitation details. Please try again.")
+        } finally {
+          setIsLoadingInvitation(false)
+        }
+      } else {
+        console.log("ℹ️ No invitation token found - regular registration")
+      }
+    }
+
+    loadInvitation()
+  }, [invitationToken])
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setSuccess("")
+    setNeedsEmailConfirmation(false)
     setIsLoading(true)
 
     console.log("🚀 Starting registration process...")
@@ -56,59 +118,52 @@ export default function RegisterPage() {
     try {
       console.log("📝 Creating account for:", formData.email)
 
-      // Sign up with Supabase
-      const { data, error } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-        options: {
-          data: {
-            name: formData.name,
-            role: formData.role,
-          },
-        },
-      })
+      const signupResult = await authService.signUp(formData.email, formData.password, formData.name, formData.role)
+      console.log("✅ Signup result:", signupResult)
 
-      if (error) {
-        console.error("Supabase signup error:", error)
-        setError(error.message || "Registration failed. Please try again.")
-        setIsLoading(false)
-        return
-      }
-
-      if (data.user) {
-        console.log("User created successfully:", data.user.id)
-
-        // Create profile immediately
-        const { error: profileError } = await supabase.from("profiles").insert({
-          id: data.user.id,
-          email: formData.email,
-          name: formData.name,
-          role: formData.role,
-        })
-
-        if (profileError) {
-          console.error("Error creating profile:", profileError)
-        } else {
-          console.log("Profile created successfully")
-        }
-
+      if (signupResult.user) {
         // Check if email confirmation is needed
-        if (!data.user.email_confirmed_at) {
+        if (signupResult.needsEmailConfirmation || !signupResult.user.email_confirmed_at) {
           console.log("📧 Email confirmation required")
+          setNeedsEmailConfirmation(true)
           setSuccess(
             `🎉 Account created successfully! Please check your email (${formData.email}) and click the confirmation link to activate your account.`,
           )
-          setIsLoading(false)
         } else {
           // Account is ready to use
-          const redirectPath = formData.role === "agency" ? "/agency" : "/dashboard"
-          console.log(`🏠 Registration successful, redirecting to ${redirectPath}...`)
-          setSuccess(
-            `🎉 Account created successfully! Redirecting to ${formData.role === "agency" ? "agency dashboard" : "dashboard"}...`,
-          )
-          setTimeout(() => {
-            router.push(redirectPath)
-          }, 1500)
+          if (invitation && invitationToken && formData.role === "traveler") {
+            try {
+              console.log("🎯 Accepting invitation...")
+              const accepted = await invitationsService.acceptInvitation(invitationToken)
+              console.log("📧 Invitation acceptance result:", accepted)
+
+              if (tripDetails) {
+                setSuccess(`🎉 Account created successfully! You've been added to "${tripDetails.title}".`)
+              } else {
+                setSuccess("🎉 Account created successfully! You've been added to the trip.")
+              }
+
+              setTimeout(() => {
+                console.log("🏠 Redirecting to dashboard...")
+                router.push("/dashboard")
+              }, 2000)
+            } catch (invError) {
+              console.error("⚠️ Error accepting invitation:", invError)
+              setSuccess("🎉 Account created successfully! Redirecting to dashboard...")
+              setTimeout(() => {
+                router.push("/dashboard")
+              }, 1500)
+            }
+          } else {
+            const redirectPath = formData.role === "agency" ? "/agency" : "/dashboard"
+            console.log(`🏠 Registration successful, redirecting to ${redirectPath}...`)
+            setSuccess(
+              `🎉 Account created successfully! Redirecting to ${formData.role === "agency" ? "agency dashboard" : "dashboard"}...`,
+            )
+            setTimeout(() => {
+              router.push(redirectPath)
+            }, 1500)
+          }
         }
       }
     } catch (error: any) {
@@ -134,11 +189,39 @@ export default function RegisterPage() {
     }
   }
 
+  const handleResendConfirmation = async () => {
+    if (!formData.email) {
+      setError("Please enter your email address first")
+      return
+    }
+
+    try {
+      setIsLoading(true)
+      await authService.resendConfirmation(formData.email)
+      setSuccess("Confirmation email sent! Please check your inbox.")
+    } catch (error: any) {
+      setError(error.message || "Failed to resend confirmation email")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     })
+  }
+
+  if (isLoadingInvitation) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2 text-gray-600">Loading invitation...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -149,13 +232,73 @@ export default function RegisterPage() {
             <Plane className="h-8 w-8 text-blue-600 mr-2" />
             <h1 className="text-3xl font-bold text-gray-900">TravelPlan</h1>
           </div>
-          <p className="text-gray-600">Start planning your adventures</p>
+          <p className="text-gray-600">
+            {invitation ? "🎯 Join the trip and start planning!" : "Start planning your adventures"}
+          </p>
         </div>
+
+        {/* Invitation Details */}
+        {invitation && tripDetails && (
+          <Card className="mb-6 border-blue-200 bg-blue-50">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center text-blue-900">
+                <Users className="h-5 w-5 mr-2" />🎉 Trip Invitation
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex items-center text-sm">
+                  <MapPin className="h-4 w-4 mr-2 text-blue-600" />
+                  <span className="font-medium text-blue-900">{tripDetails.title}</span>
+                </div>
+                <p className="text-sm text-blue-700">You've been invited to collaborate on this trip!</p>
+                {tripDetails.countries && tripDetails.countries.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {tripDetails.countries.slice(0, 3).map((country: string) => (
+                      <span key={country} className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                        {country}
+                      </span>
+                    ))}
+                    {tripDetails.countries.length > 3 && (
+                      <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                        +{tripDetails.countries.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Warning for agency users with invitations */}
+        {invitation && formData.role === "agency" && (
+          <Alert className="mb-6" variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Note:</strong> Travel agencies cannot accept trip invitations. Trip invitations are for individual
+              travelers only. You can still create an agency account, but you won't be added to this trip.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!isSupabaseAvailable() && (
+          <Alert className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Demo Mode:</strong> Supabase not configured. Registration will work in demo mode with mock data.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card>
           <CardHeader>
-            <CardTitle>Create your account</CardTitle>
-            <CardDescription>Join thousands of travelers worldwide</CardDescription>
+            <CardTitle>{invitation ? "🎯 Accept Invitation & Create Account" : "Create your account"}</CardTitle>
+            <CardDescription>
+              {invitation
+                ? "Create your account to join the trip and start collaborating"
+                : "Join thousands of travelers worldwide"}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {error && (
@@ -169,6 +312,20 @@ export default function RegisterPage() {
               <Alert className="mb-4">
                 <CheckCircle className="h-4 w-4" />
                 <AlertDescription>{success}</AlertDescription>
+              </Alert>
+            )}
+
+            {needsEmailConfirmation && (
+              <Alert className="mb-4">
+                <Mail className="h-4 w-4" />
+                <AlertDescription>
+                  <div className="space-y-2">
+                    <p>Please check your email and click the confirmation link to activate your account.</p>
+                    <Button variant="outline" size="sm" onClick={handleResendConfirmation} disabled={isLoading}>
+                      Resend Confirmation Email
+                    </Button>
+                  </div>
+                </AlertDescription>
               </Alert>
             )}
 
@@ -226,8 +383,9 @@ export default function RegisterPage() {
                   value={formData.email}
                   onChange={handleInputChange}
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || !!invitation}
                 />
+                {invitation && <p className="text-xs text-gray-500">✅ Email pre-filled from invitation</p>}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
@@ -258,14 +416,19 @@ export default function RegisterPage() {
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading
                   ? "Creating Account..."
-                  : `Create ${formData.role === "agency" ? "Agency" : "Traveler"} Account`}
+                  : invitation
+                    ? "🎯 Accept Invitation & Create Account"
+                    : `Create ${formData.role === "agency" ? "Agency" : "Traveler"} Account`}
               </Button>
             </form>
 
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-600">
                 Already have an account?{" "}
-                <Link href="/" className="text-blue-600 hover:underline font-medium">
+                <Link
+                  href={invitation ? `/?invitation=${invitationToken}&trip=${tripId}` : "/"}
+                  className="text-blue-600 hover:underline font-medium"
+                >
                   Sign in
                 </Link>
               </p>
