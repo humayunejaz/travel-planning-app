@@ -27,7 +27,13 @@ export const authService = {
     }
 
     try {
-      console.log("Attempting Supabase signup...")
+      console.log("Attempting Supabase signup with email confirmation...")
+
+      // Get the current URL for redirect
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/auth/confirm`
+          : `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/confirm`
 
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -37,6 +43,8 @@ export const authService = {
             name: name,
             role: role,
           },
+          // Enable email confirmation with proper redirect
+          emailRedirectTo: redirectUrl,
         },
       })
 
@@ -49,15 +57,10 @@ export const authService = {
 
       if (data.user) {
         console.log("User created successfully:", data.user.id)
+        console.log("Email confirmation required:", !data.user.email_confirmed_at)
 
-        // Immediately confirm the user's email in the database
-        try {
-          await supabase.rpc("confirm_user_email", { user_id: data.user.id })
-        } catch (confirmError) {
-          console.warn("Could not auto-confirm email:", confirmError)
-        }
-
-        // Create profile
+        // Create profile immediately - don't wait for email confirmation
+        // This ensures the profile exists even if email confirmation is pending
         try {
           const { error: profileError } = await supabase.from("profiles").upsert({
             id: data.user.id,
@@ -75,23 +78,36 @@ export const authService = {
           console.warn("Error creating profile:", profileError)
         }
 
-        return data
+        return {
+          user: data.user,
+          session: data.session,
+          needsEmailConfirmation: !data.user.email_confirmed_at,
+        }
       } else {
         throw new Error("User creation failed - no user returned")
       }
     } catch (error: any) {
       console.error("Signup error:", error)
 
-      // Fall back to demo mode on any error
-      const mockUser = {
-        id: generateSimpleId(),
-        email,
-        name,
-        role,
+      // Only fall back to demo mode for configuration errors
+      if (
+        error.message?.includes("configuration") ||
+        error.message?.includes("API key") ||
+        error.message?.includes("Invalid API key")
+      ) {
+        console.log("Falling back to demo mode due to configuration error")
+        const mockUser = {
+          id: generateSimpleId(),
+          email,
+          name,
+          role,
+        }
+        localStorage.setItem("mockUser", JSON.stringify(mockUser))
+        localStorage.setItem("isAuthenticated", "true")
+        return { user: mockUser, session: null }
       }
-      localStorage.setItem("mockUser", JSON.stringify(mockUser))
-      localStorage.setItem("isAuthenticated", "true")
-      return { user: mockUser, session: null }
+
+      throw error
     }
   },
 
@@ -140,33 +156,11 @@ export const authService = {
       if (error) {
         console.error("Supabase signin error:", error)
 
-        // Handle email confirmation error by trying to confirm the user
+        // Handle email confirmation error specifically
         if (error.message.includes("Email not confirmed")) {
-          console.log("Email not confirmed, attempting to confirm user...")
-
-          try {
-            // Try to confirm the user's email
-            const { data: users } = await supabase.from("auth.users").select("id").eq("email", email).single()
-
-            if (users) {
-              await supabase.rpc("confirm_user_email", { user_id: users.id })
-
-              // Try signing in again
-              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-                email,
-                password,
-              })
-
-              if (!retryError && retryData.user) {
-                console.log("Successfully confirmed and signed in user")
-                return retryData
-              }
-            }
-          } catch (confirmError) {
-            console.error("Could not confirm user:", confirmError)
-          }
-
-          throw new Error("Your account needs email confirmation. Please check your email or contact support.")
+          throw new Error(
+            "Please check your email and click the confirmation link before signing in. If you can't find the email, check your spam folder.",
+          )
         }
 
         if (error.message.includes("Invalid login credentials")) {
@@ -178,6 +172,43 @@ export const authService = {
 
       if (data.user) {
         console.log("Sign in successful:", data.user.id)
+
+        // Check if user has confirmed email
+        if (!data.user.email_confirmed_at) {
+          throw new Error(
+            "Please confirm your email address before signing in. Check your email for the confirmation link.",
+          )
+        }
+
+        // Check if profile exists, if not create it
+        try {
+          const { data: profile, error: profileError } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", data.user.id)
+            .single()
+
+          if (profileError || !profile) {
+            console.log("Profile not found, creating one...")
+            const metadata = data.user.user_metadata || {}
+
+            const { error: insertError } = await supabase.from("profiles").upsert({
+              id: data.user.id,
+              email: data.user.email || "",
+              name: metadata.name || data.user.email?.split("@")[0] || "User",
+              role: (metadata.role as "traveler" | "agency") || "traveler",
+            })
+
+            if (insertError) {
+              console.warn("Error creating profile on signin:", insertError)
+            } else {
+              console.log("Profile created on signin")
+            }
+          }
+        } catch (profileError) {
+          console.warn("Error checking/creating profile:", profileError)
+        }
+
         return data
       }
 
@@ -185,20 +216,22 @@ export const authService = {
     } catch (error: any) {
       console.error("Signin error:", error)
 
-      // Check for demo users as fallback
-      if (
-        (email === "user@example.com" && password === "password") ||
-        (email === "agency@example.com" && password === "password")
-      ) {
-        const mockUser = {
-          id: generateSimpleId(),
-          email,
-          name: email === "agency@example.com" ? "Agency Admin" : "Test User",
-          role: email === "agency@example.com" ? "agency" : "traveler",
+      // Check for demo users as fallback only for configuration errors
+      if (error.message?.includes("configuration") || error.message?.includes("API key")) {
+        if (
+          (email === "user@example.com" && password === "password") ||
+          (email === "agency@example.com" && password === "password")
+        ) {
+          const mockUser = {
+            id: generateSimpleId(),
+            email,
+            name: email === "agency@example.com" ? "Agency Admin" : "Test User",
+            role: email === "agency@example.com" ? "agency" : "traveler",
+          }
+          localStorage.setItem("mockUser", JSON.stringify(mockUser))
+          localStorage.setItem("isAuthenticated", "true")
+          return { user: mockUser, session: null }
         }
-        localStorage.setItem("mockUser", JSON.stringify(mockUser))
-        localStorage.setItem("isAuthenticated", "true")
-        return { user: mockUser, session: null }
       }
 
       throw error
@@ -238,6 +271,13 @@ export const authService = {
 
       if (!user) return null
 
+      // Only return user if email is confirmed
+      if (!user.email_confirmed_at) {
+        console.log("User email not confirmed, signing out...")
+        await this.signOut()
+        return null
+      }
+
       // Try to get profile
       try {
         const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
@@ -248,6 +288,35 @@ export const authService = {
             email: profile.email || user.email || "",
             name: profile.name || user.email?.split("@")[0] || "User",
             role: (profile.role as "traveler" | "agency") || "traveler",
+          }
+        } else {
+          // Profile doesn't exist, create it
+          console.log("Profile not found, creating one...")
+          const metadata = user.user_metadata || {}
+
+          const { error: insertError } = await supabase.from("profiles").upsert({
+            id: user.id,
+            email: user.email || "",
+            name: metadata.name || user.email?.split("@")[0] || "User",
+            role: (metadata.role as "traveler" | "agency") || "traveler",
+          })
+
+          if (insertError) {
+            console.warn("Error creating profile in getCurrentUser:", insertError)
+          } else {
+            console.log("Profile created in getCurrentUser")
+
+            // Try to get the newly created profile
+            const { data: newProfile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+
+            if (newProfile) {
+              return {
+                id: newProfile.id,
+                email: newProfile.email || user.email || "",
+                name: newProfile.name || user.email?.split("@")[0] || "User",
+                role: (newProfile.role as "traveler" | "agency") || "traveler",
+              }
+            }
           }
         }
       } catch (profileError) {
@@ -277,6 +346,9 @@ export const authService = {
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/confirm`,
+        },
       })
 
       if (error) {
