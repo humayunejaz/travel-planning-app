@@ -1,208 +1,125 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plane, AlertCircle, CheckCircle, Loader2 } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { CheckCircle, XCircle, Loader2 } from "lucide-react"
 
-export default function EmailConfirmationPage() {
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading")
-  const [message, setMessage] = useState("")
-  const [userId, setUserId] = useState<string | null>(null)
+export default function ConfirmPage() {
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
+  const supabase = createClientComponentClient()
 
   useEffect(() => {
-    const handleEmailConfirmation = async () => {
+    const confirmEmail = async () => {
       try {
-        // Check if we have a hash fragment in the URL
-        const hash = window.location.hash
+        setIsLoading(true)
 
-        if (hash && hash.includes("access_token") && hash.includes("refresh_token")) {
-          console.log("Found tokens in URL hash, processing confirmation...")
+        // Get the token and type from the URL
+        const token_hash = searchParams.get("token_hash")
+        const type = searchParams.get("type")
 
-          // Process the email confirmation
-          const { data, error } = await supabase.auth.getSession()
+        if (!token_hash || !type) {
+          setError("Missing confirmation parameters")
+          setIsLoading(false)
+          return
+        }
 
-          if (error) {
-            console.error("Error getting session:", error)
-            setStatus("error")
-            setMessage("Failed to confirm email. Please try again or contact support.")
-            return
-          }
+        // Verify the email
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash,
+          type: type as any,
+        })
 
-          if (data?.session?.user) {
-            console.log("Email confirmed successfully, user:", data.session.user.id)
-            setUserId(data.session.user.id)
+        if (error) {
+          setError(error.message)
+          setIsLoading(false)
+          return
+        }
 
-            // Ensure profile exists
-            try {
-              const { data: profile, error: profileError } = await supabase
-                .from("profiles")
-                .select("*")
-                .eq("id", data.session.user.id)
-                .single()
+        // Get the user
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
 
-              if (profileError || !profile) {
-                console.log("Creating profile after email confirmation...")
-                const metadata = data.session.user.user_metadata || {}
+        if (!user) {
+          setError("User not found")
+          setIsLoading(false)
+          return
+        }
 
-                const { error: insertError } = await supabase.from("profiles").upsert({
-                  id: data.session.user.id,
-                  email: data.session.user.email || "",
-                  name: metadata.name || data.session.user.email?.split("@")[0] || "User",
-                  role: (metadata.role as "traveler" | "agency") || "traveler",
-                })
+        // Check if profile exists
+        const { data: profile } = await supabase.from("profiles").select().eq("id", user.id).single()
 
-                if (insertError) {
-                  console.warn("Error creating profile after confirmation:", insertError)
-                } else {
-                  console.log("Profile created after email confirmation")
-                }
-              } else {
-                console.log("Profile already exists:", profile)
-              }
-            } catch (profileError) {
-              console.warn("Error checking/creating profile:", profileError)
-            }
+        // Create profile if it doesn't exist
+        if (!profile) {
+          const { error: profileError } = await supabase.from("profiles").insert({
+            id: user.id,
+            email: user.email!,
+            name: user.user_metadata.name || user.email!.split("@")[0],
+            role: user.user_metadata.role || "traveler",
+          })
 
-            setStatus("success")
-            setMessage("Your email has been confirmed successfully!")
-          } else {
-            console.error("No user in session after confirmation")
-            setStatus("error")
-            setMessage("Failed to confirm email. Please try again or contact support.")
-          }
-        } else {
-          // Check if we have a code in the URL
-          const code = searchParams.get("code")
-
-          if (code) {
-            console.log("Found code in URL, processing confirmation...")
-
-            // Process the email confirmation
-            const { data, error } = await supabase.auth.exchangeCodeForSession(code)
-
-            if (error) {
-              console.error("Error exchanging code for session:", error)
-              setStatus("error")
-              setMessage("Failed to confirm email. Please try again or contact support.")
-              return
-            }
-
-            if (data?.user) {
-              console.log("Email confirmed successfully, user:", data.user.id)
-              setUserId(data.user.id)
-
-              // Ensure profile exists
-              try {
-                const { data: profile, error: profileError } = await supabase
-                  .from("profiles")
-                  .select("*")
-                  .eq("id", data.user.id)
-                  .single()
-
-                if (profileError || !profile) {
-                  console.log("Creating profile after email confirmation...")
-                  const metadata = data.user.user_metadata || {}
-
-                  const { error: insertError } = await supabase.from("profiles").upsert({
-                    id: data.user.id,
-                    email: data.user.email || "",
-                    name: metadata.name || data.user.email?.split("@")[0] || "User",
-                    role: (metadata.role as "traveler" | "agency") || "traveler",
-                  })
-
-                  if (insertError) {
-                    console.warn("Error creating profile after confirmation:", insertError)
-                  } else {
-                    console.log("Profile created after email confirmation")
-                  }
-                } else {
-                  console.log("Profile already exists:", profile)
-                }
-              } catch (profileError) {
-                console.warn("Error checking/creating profile:", profileError)
-              }
-
-              setStatus("success")
-              setMessage("Your email has been confirmed successfully!")
-            } else {
-              console.error("No user returned after confirmation")
-              setStatus("error")
-              setMessage("Failed to confirm email. Please try again or contact support.")
-            }
-          } else {
-            console.error("No confirmation code or tokens found in URL")
-            setStatus("error")
-            setMessage("Invalid confirmation link. Please try again or contact support.")
+          if (profileError) {
+            console.error("Error creating profile:", profileError)
           }
         }
-      } catch (error) {
-        console.error("Email confirmation error:", error)
-        setStatus("error")
-        setMessage("An unexpected error occurred. Please try again or contact support.")
+
+        setSuccess(true)
+        setIsLoading(false)
+
+        // Redirect after a short delay
+        setTimeout(() => {
+          router.push("/dashboard")
+        }, 2000)
+      } catch (err: any) {
+        setError(err.message || "An error occurred during confirmation")
+        setIsLoading(false)
       }
     }
 
-    handleEmailConfirmation()
-  }, [searchParams])
-
-  const handleContinue = () => {
-    const redirectTo = userId ? "/dashboard" : "/"
-    router.push(redirectTo)
-  }
+    confirmEmail()
+  }, [searchParams, router, supabase])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center mb-4">
-            <Plane className="h-8 w-8 text-blue-600 mr-2" />
-            <h1 className="text-3xl font-bold text-gray-900">TravelPlan</h1>
-          </div>
-          <p className="text-gray-600">Email Confirmation</p>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Email Confirmation</CardTitle>
-            <CardDescription>Verifying your email address</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {status === "loading" && (
-              <div className="flex flex-col items-center justify-center py-4">
-                <Loader2 className="h-8 w-8 text-blue-600 animate-spin mb-4" />
-                <p className="text-gray-600">Verifying your email address...</p>
-              </div>
-            )}
-
-            {status === "success" && (
-              <Alert>
-                <CheckCircle className="h-4 w-4" />
-                <AlertDescription>{message}</AlertDescription>
-              </Alert>
-            )}
-
-            {status === "error" && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{message}</AlertDescription>
-              </Alert>
-            )}
-
-            <Button onClick={handleContinue} className="w-full" disabled={status === "loading"}>
-              {status === "success" ? "Continue to Dashboard" : "Back to Sign In"}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Email Confirmation</CardTitle>
+          <CardDescription>Verifying your email address</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-8">
+              <Loader2 className="h-12 w-12 animate-spin text-primary" />
+              <p className="mt-4 text-center text-sm text-gray-500">Verifying your email address...</p>
+            </div>
+          ) : success ? (
+            <Alert className="border-green-500 bg-green-50">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <AlertTitle>Success!</AlertTitle>
+              <AlertDescription>
+                Your email has been verified. You will be redirected to the dashboard.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert className="border-red-500 bg-red-50">
+              <XCircle className="h-5 w-5 text-red-500" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+        <CardFooter className="flex justify-center">
+          {!isLoading && <Button onClick={() => router.push("/")}>Return to Home</Button>}
+        </CardFooter>
+      </Card>
     </div>
   )
 }
-
-
-
